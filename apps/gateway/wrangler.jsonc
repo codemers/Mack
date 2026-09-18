@@ -5,7 +5,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "WEB_ORIGIN": "https://mack-teal.vercel.app",
-    "GATEWAY_URL": "https://mcp.usemack.ai/mcp",
+    "GATEWAY_URL": "https://mack-gateway-staging.blogue.workers.dev/mcp",
     "MCP_ALLOWED_HOSTS": "api.githubcopilot.com,mcp.linear.app,mcp.notion.com,mcp.slack.com,mcp.stripe.com",
   },
   "d1_databases": [
