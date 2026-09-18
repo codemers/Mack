@@ -88,6 +88,8 @@ for (const mode of ['register', 'login'] as const)
         name: nameSchema.optional(),
       })
       .parse(await c.req.json());
+    if (mode === 'register' && data.email !== 'codemers@apprentx.rocks')
+      throw new HttpError(403, 'Account registration is restricted.');
     await rateLimit(c.env.DB, `auth:${await hash(data.email)}`, 10);
     let user = await first<User & { password_hash: string | null }>(
       c.env.DB,

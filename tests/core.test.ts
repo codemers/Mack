@@ -368,7 +368,7 @@ test('registration creates a session and logout invalidates it', async () => {
   env.DEMO_MODE = 'false';
   const registration = await request('/auth/register', 'POST', {
     name: 'New person',
-    email: 'new@example.com',
+    email: 'codemers@apprentx.rocks',
     password: 'a-long-test-password',
   });
   assert.equal(registration.status, 200);
@@ -378,7 +378,7 @@ test('registration creates a session and logout invalidates it', async () => {
   await request('/auth/logout', 'POST', {}, { cookie });
   assert.equal((await request('/session', 'GET', undefined, { cookie })).status, 401);
   const login = await request('/auth/login', 'POST', {
-    email: 'new@example.com',
+    email: 'codemers@apprentx.rocks',
     password: 'a-long-test-password',
   });
   assert.equal(login.status, 200);
@@ -548,4 +548,30 @@ test('workspace members cannot approve tools', async () => {
   );
   assert.equal(response.status, 404);
   assert.equal((await all(db, 'SELECT * FROM tool_reviews')).length, 0);
+});
+
+test('registration rejects other addresses without creating accounts or sessions', async () => {
+  env.DEMO_MODE = 'false';
+  for (const email of [
+    'other@apprentx.rocks',
+    'codemers@example.com',
+    'codemers+test@apprentx.rocks',
+  ]) {
+    const response = await request('/auth/register', 'POST', {
+      email,
+      password: 'a-long-test-password',
+    });
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.get('set-cookie'), null);
+    assert.equal(await first(db, 'SELECT id FROM users WHERE email=?', email), null);
+  }
+});
+test('registration normalizes casing for the single allowed address', async () => {
+  env.DEMO_MODE = 'false';
+  const response = await request('/auth/register', 'POST', {
+    email: 'Codemers@Apprentx.Rocks',
+    password: 'a-long-test-password',
+  });
+  assert.equal(response.status, 200);
+  assert.ok(await first(db, 'SELECT id FROM users WHERE email=?', 'codemers@apprentx.rocks'));
 });
