@@ -8,6 +8,7 @@ import { all, first, run, type Env } from '../packages/db/src/index';
 import { decrypt, encrypt, hash, token } from '../packages/crypto/src/index';
 import {
   beginOAuth,
+  oauthFetch,
   assertOAuthUrl,
   refreshCredentials,
   type OAuthCredentials,
@@ -330,4 +331,15 @@ test('workspace authorization is rechecked after OAuth consent', async () => {
   await run(db, "DELETE FROM workspace_members WHERE workspace_id='ws'");
   assert.equal((await finish(new URL(url))).status, 403);
   assert.equal(exchanges, 0);
+});
+
+test('OAuth uses Worker-compatible manual redirects and refuses redirect responses', async () => {
+  globalThis.fetch = async (_input, init) => {
+    assert.equal(init?.redirect, 'manual');
+    return new Response(null, { status: 302, headers: { location: 'https://evil.test/token' } });
+  };
+  await assert.rejects(
+    () => oauthFetch(env, 'https://mcp.linear.app/mcp')('https://mcp.linear.app/token'),
+    /redirect/i,
+  );
 });

@@ -88,11 +88,15 @@ export async function withRemote<T>(
       throw new HttpError(502, 'Remote server attempted to change its endpoint.');
     const response = await fetch(input, {
       ...init,
-      redirect: 'error',
+      redirect: 'manual',
       signal: AbortSignal.any([AbortSignal.timeout(20000), ...(init?.signal ? [init.signal] : [])]),
     });
     if (Number(response.headers.get('content-length') || 0) > 4 * 1024 * 1024)
       throw new HttpError(502, 'Remote response exceeds 4 MB.');
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      throw new HttpError(502, 'Remote redirects are not allowed.');
+    }
     if (!response.body) return response;
     let received = 0;
     const bounded = response.body.pipeThrough(

@@ -82,9 +82,13 @@ export function oauthFetch(env: Env, serverUrl: string): typeof fetch {
     const response = await fetch(input, {
       ...init,
       headers: { Accept: 'application/json', ...Object.fromEntries(new Headers(init?.headers)) },
-      redirect: 'error',
+      redirect: 'manual',
       signal: AbortSignal.any([AbortSignal.timeout(12000), ...(init?.signal ? [init.signal] : [])]),
     });
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      throw new HttpError(502, 'Remote redirects are not allowed.');
+    }
     if (!response.body) return response;
     const reader = response.body.getReader();
     let size = 0;

@@ -17,7 +17,7 @@ import {
 } from '../packages/crypto/src/index';
 import { canUse, availableTools, canManage } from '../packages/permissions/src/index';
 import { authenticateClient, sessionUser, rateLimit } from '../packages/auth/src/index';
-import { validateServerUrl } from '../packages/mcp/src/index';
+import { validateServerUrl, withRemote } from '../packages/mcp/src/index';
 import {
   classify,
   namespace,
@@ -574,4 +574,28 @@ test('registration normalizes casing for the single allowed address', async () =
   });
   assert.equal(response.status, 200);
   assert.ok(await first(db, 'SELECT id FROM users WHERE email=?', 'codemers@apprentx.rocks'));
+});
+
+test('MCP transport uses Worker-compatible redirects and never follows upstream redirects', async () => {
+  const previous = globalThis.fetch;
+  let calls = 0;
+  try {
+    globalThis.fetch = async (_input, init) => {
+      calls++;
+      assert.equal(init?.redirect, 'manual');
+      return new Response(null, { status: 307, headers: { location: 'https://evil.test/mcp' } });
+    };
+    await assert.rejects(
+      () =>
+        withRemote(
+          env,
+          { id: 'test', server_url: 'https://mcp.linear.app/mcp', auth_type: 'none' },
+          async () => {},
+        ),
+      /redirect/i,
+    );
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = previous;
+  }
 });
