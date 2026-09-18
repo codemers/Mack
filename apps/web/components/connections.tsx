@@ -307,7 +307,46 @@ export function AddConnection({
   const [url, setUrl] = useState('');
   const [scope, setScope] = useState('personal');
   const [auth, setAuth] = useState('oauth');
-  const [oauthScope, setOauthScope] = useState('');
+  const [scopeOptions, setScopeOptions] = useState<{
+    url: string;
+    scopes: {
+      value: string;
+      label: string;
+      description: string;
+      access: string;
+      selected: boolean;
+    }[];
+  } | null>(null);
+  const [scopeError, setScopeError] = useState('');
+  const [scopeRetry, setScopeRetry] = useState(0);
+  useEffect(() => {
+    setScopeOptions(null);
+    setScopeError('');
+    if (!open || !provider || auth !== 'oauth' || !url) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      api<{ scopes: NonNullable<typeof scopeOptions>['scopes'] }>('/oauth/scopes', {
+        method: 'POST',
+        body: JSON.stringify({ server_url: url }),
+        signal: controller.signal,
+      })
+        .then((result) => {
+          if (!controller.signal.aborted) setScopeOptions({ url, scopes: result.scopes });
+        })
+        .catch((error) => {
+          if (!controller.signal.aborted)
+            setScopeError(error instanceof Error ? error.message : 'Could not load permissions.');
+        });
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [open, provider, auth, url, scopeRetry]);
+  const currentScopes = scopeOptions?.url === url ? scopeOptions.scopes : null;
+  const missingScopes =
+    !currentScopes ||
+    (currentScopes.length > 0 && !currentScopes.some((option) => option.selected));
   const [oauthConfig, setOauthConfig] = useState<{
     callbackUrl: string;
     providers: Record<string, { ready: boolean; defaultScope: string; appRequired: boolean }>;
@@ -355,7 +394,7 @@ export function AddConnection({
                 setName(p.name);
                 setUrl(p.url);
                 setAuth('oauth');
-                setOauthScope('');
+                setScopeOptions(null);
               }}
             >
               <ProviderIcon provider={p.id} size={40} />
@@ -376,6 +415,7 @@ export function AddConnection({
           onSubmit={async (e) => {
             e.preventDefault();
             if (auth === 'oauth') {
+              if (missingScopes || oauthProvider?.ready === false) return;
               await action.run(async () => {
                 const result = await mutate<{ url: string }>('/oauth/start', 'POST', {
                   name,
@@ -383,7 +423,12 @@ export function AddConnection({
                   server_url: url,
                   scope,
                   workspace_id: scope === 'workspace' ? data.workspace : undefined,
-                  oauth_scope: oauthScope.trim() || undefined,
+                  oauth_scope: currentScopes?.length
+                    ? currentScopes
+                        .filter((option) => option.selected)
+                        .map((option) => option.value)
+                        .join(' ')
+                    : undefined,
                 });
                 window.location.assign(result.url);
               });
@@ -491,18 +536,68 @@ export function AddConnection({
           )}
           {auth === 'oauth' && (
             <>
-              <label className="field">
-                OAuth scopes{' '}
-                <input
-                  value={oauthScope}
-                  onChange={(e) => setOauthScope(e.target.value)}
-                  placeholder={oauthProvider?.defaultScope || 'Provider default'}
-                />
-              </label>
+              <fieldset className="oauth-permissions" disabled={action.busy}>
+                <legend>OAuth permissions</legend>
+                {!currentScopes && !scopeError && (
+                  <p className="form-hint" role="status">
+                    {url
+                      ? 'Loading provider permissions…'
+                      : 'Enter a server URL to load permissions.'}
+                  </p>
+                )}
+                {scopeError && (
+                  <div role="alert">
+                    <p className="form-hint">{scopeError}</p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setScopeRetry((value) => value + 1)}
+                    >
+                      Retry loading permissions
+                    </Button>
+                  </div>
+                )}
+                {currentScopes?.map((option) => (
+                  <label className="oauth-permission" key={option.value}>
+                    <input
+                      type="checkbox"
+                      checked={option.selected}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setScopeOptions(
+                          (previous) =>
+                            previous && {
+                              ...previous,
+                              scopes: previous.scopes.map((item) =>
+                                item.value === option.value ? { ...item, selected: checked } : item,
+                              ),
+                            },
+                        );
+                      }}
+                    />
+                    <span>
+                      <strong>{option.label}</strong>
+                      <small>{option.description}</small>
+                      <code>{option.value}</code>
+                    </span>
+                    <Badge>{option.access}</Badge>
+                  </label>
+                ))}
+                {currentScopes?.length === 0 && (
+                  <p className="form-hint">
+                    Permissions are managed by the provider or its configured app. Review access on
+                    its consent screen.
+                  </p>
+                )}
+                {currentScopes && currentScopes.length > 0 && missingScopes && (
+                  <p className="form-hint" role="status">
+                    Select at least one permission to continue.
+                  </p>
+                )}
+              </fieldset>
               <p className="form-hint">
-                You’ll sign in with the provider, then return to review discovered tools. Linear
-                defaults to read-only; other providers use the permissions shown on their consent
-                screen.
+                These permissions apply to the connection. After signing in, you’ll review which
+                tools Mack allows. Providers do not always publish the scopes required by each tool.
               </p>
               {oauthProvider?.appRequired && !oauthProvider.ready && (
                 <p role="alert" className="form-hint">
@@ -524,7 +619,7 @@ export function AddConnection({
             </Button>
             <Submit
               busy={action.busy}
-              disabled={auth === 'oauth' && oauthProvider?.ready === false}
+              disabled={auth === 'oauth' && (oauthProvider?.ready === false || missingScopes)}
             >
               {auth === 'oauth' ? 'Continue with OAuth' : 'Connect server'}
             </Submit>

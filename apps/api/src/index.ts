@@ -1,5 +1,6 @@
 import {
   beginOAuth,
+  oauthScopeOptions,
   completeOAuth,
   stateKey,
   providers as oauthProviders,
@@ -170,6 +171,11 @@ app.get('/api/oauth/providers', async (c) => {
       ]),
     ),
   });
+});
+app.post('/api/oauth/scopes', async (c) => {
+  const { server_url } = z.object({ server_url: z.string().max(2048) }).parse(await c.req.json());
+  validateServerUrl(server_url, c.env);
+  return c.json(await oauthScopeOptions(c.env, server_url));
 });
 app.post('/api/oauth/start', async (c) => {
   const data = z

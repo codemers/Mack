@@ -1,3 +1,4 @@
+import { describeScope } from './scopes';
 import {
   discoverOAuthServerInfo,
   extractWWWAuthenticateParams,
@@ -149,7 +150,7 @@ function validateInfo(env: Env, serverUrl: string, info: OAuthServerInfo) {
       throw new HttpError(400, 'OAuth resource does not match the MCP endpoint.');
   }
 }
-export async function beginOAuth(env: Env, serverUrl: string, scope?: string) {
+async function discoverInfo(env: Env, serverUrl: string) {
   const fetchFn = oauthFetch(env, serverUrl);
   const challenge = await fetchFn(serverUrl, {
     method: 'GET',
@@ -161,15 +162,54 @@ export async function beginOAuth(env: Env, serverUrl: string, scope?: string) {
     fetchFn,
   });
   validateInfo(env, serverUrl, info);
-  const redirectUri = `${env.WEB_ORIGIN}/api/oauth/callback`;
+  return info;
+}
+
+export async function oauthScopeOptions(env: Env, serverUrl: string) {
+  const info = await discoverInfo(env, serverUrl);
   const host = new URL(serverUrl).hostname;
-  let configured: Record<string, { client_id: string; client_secret?: string; scope?: string }> =
-    {};
+  const configured = configuredClients(env)[host];
+  const defaults = (configured?.scope ?? providers[host]?.defaultScope ?? '')
+    .split(/\s+/)
+    .filter(Boolean);
+  const advertised = advertisedScopes(info);
+  const providerManaged = configured?.scope === '';
+  const values = providerManaged ? [] : advertised.length ? advertised : defaults;
+  return {
+    providerManaged,
+    scopes: [...new Set(values)].map((value) => ({
+      value,
+      ...describeScope(host, value),
+      selected: defaults.includes(value),
+    })),
+  };
+}
+
+function advertisedScopes(info: OAuthServerInfo) {
+  return [
+    ...new Set([
+      ...(info.authorizationServerMetadata?.scopes_supported || []),
+      ...(info.resourceMetadata?.scopes_supported || []),
+    ]),
+  ];
+}
+
+function configuredClients(
+  env: Env,
+): Record<string, { client_id: string; client_secret?: string; scope?: string }> {
   try {
-    configured = JSON.parse(env.OAUTH_CLIENTS_JSON || '{}');
+    return JSON.parse(env.OAUTH_CLIENTS_JSON || '{}');
   } catch {
     throw new HttpError(503, 'OAuth app configuration is invalid.');
   }
+}
+
+export async function beginOAuth(env: Env, serverUrl: string, scope?: string) {
+  const fetchFn = oauthFetch(env, serverUrl);
+  const info = await discoverInfo(env, serverUrl);
+  const redirectUri = `${env.WEB_ORIGIN}/api/oauth/callback`;
+  const host = new URL(serverUrl).hostname;
+  const configured = configuredClients(env);
   const app = configured[host];
   const selectedScope =
     scope ??
@@ -177,16 +217,15 @@ export async function beginOAuth(env: Env, serverUrl: string, scope?: string) {
     providers[host]?.defaultScope ??
     info.resourceMetadata?.scopes_supported?.join(' ') ??
     '';
-  const advertisedScopes = [
-    ...(info.authorizationServerMetadata?.scopes_supported || []),
-    ...(info.resourceMetadata?.scopes_supported || []),
-  ];
+  const supportedScopes = advertisedScopes(info);
+  if (scope !== undefined && !scope.trim() && supportedScopes.length)
+    throw new HttpError(400, 'Select at least one OAuth permission.');
   if (
-    advertisedScopes.length &&
+    supportedScopes.length &&
     selectedScope
       .split(/\s+/)
       .filter(Boolean)
-      .some((s) => !advertisedScopes.includes(s))
+      .some((s) => !supportedScopes.includes(s))
   )
     throw new HttpError(400, 'Requested OAuth scope is not supported by this provider.');
   let client: OAuthClientInformationMixed;

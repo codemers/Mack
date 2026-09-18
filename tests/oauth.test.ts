@@ -343,3 +343,65 @@ test('OAuth uses Worker-compatible manual redirects and refuses redirect respons
     /redirect/i,
   );
 });
+
+test('scope discovery lists provider permissions without registering a client or creating state', async () => {
+  const response = await request('/oauth/scopes', 'POST', {
+    server_url: 'https://mcp.linear.app/mcp',
+  });
+  assert.equal(response.status, 200);
+  const result = (await response.json()) as {
+    scopes: { value: string; selected: boolean; access: string }[];
+  };
+  assert.deepEqual(
+    result.scopes.filter((s) => s.selected).map((s) => s.value),
+    ['read'],
+  );
+  assert.equal(result.scopes.find((s) => s.value === 'write')?.access, 'Write');
+  assert.equal(result.scopes.find((s) => s.value === 'repo')?.access, 'Provider-defined');
+  assert.deepEqual(await all(db, 'SELECT * FROM oauth_requests'), []);
+  assert.equal(
+    (await request('/oauth/scopes', 'POST', { server_url: 'https://evil.test/mcp' })).status,
+    400,
+  );
+});
+
+test('explicit permission selections are preserved and empty or unsupported selections are rejected', async () => {
+  const flow = await beginOAuth(env, 'https://mcp.linear.app/mcp', 'read write');
+  assert.equal(new URL(flow.url).searchParams.get('scope'), 'read write');
+  await assert.rejects(
+    () => beginOAuth(env, 'https://mcp.linear.app/mcp', ''),
+    /Select at least one/,
+  );
+  await assert.rejects(
+    () => beginOAuth(env, 'https://mcp.linear.app/mcp', 'admin'),
+    /not supported/,
+  );
+});
+
+test('configured app scopes control defaults and empty scope preserves provider-managed permissions', async () => {
+  env.OAUTH_CLIENTS_JSON = JSON.stringify({
+    'api.githubcopilot.com': { client_id: 'client', client_secret: 'secret', scope: 'read:org' },
+  });
+  let response = await request('/oauth/scopes', 'POST', {
+    server_url: 'https://api.githubcopilot.com/mcp',
+  });
+  let result = (await response.json()) as {
+    scopes: { value: string; selected: boolean }[];
+    providerManaged: boolean;
+  };
+  assert.deepEqual(
+    result.scopes.filter((s) => s.selected).map((s) => s.value),
+    ['read:org'],
+  );
+  env.OAUTH_CLIENTS_JSON = JSON.stringify({
+    'api.githubcopilot.com': { client_id: 'client', client_secret: 'secret', scope: '' },
+  });
+  response = await request('/oauth/scopes', 'POST', {
+    server_url: 'https://api.githubcopilot.com/mcp',
+  });
+  result = (await response.json()) as typeof result;
+  assert.deepEqual(result.scopes, []);
+  assert.equal(result.providerManaged, true);
+  const flow = await beginOAuth(env, 'https://api.githubcopilot.com/mcp');
+  assert.equal(new URL(flow.url).searchParams.has('scope'), false);
+});

@@ -57,9 +57,9 @@ For custom servers, add the MCP host to `MCP_ALLOWED_HOSTS` on both Workers. If 
 
 ## User flow
 
-Open Connections → Add connection → choose a provider → OAuth sign-in. Set personal or workspace scope and optionally override the displayed OAuth scopes. Complete the provider's sign-in and consent. Mack discovers tools after the callback and keeps them disabled pending review. Workspace connections share the authorizing account's upstream access under Mack's existing grants; choose personal for private access.
+Open Connections → Add connection → choose a provider → OAuth sign-in. Set personal or workspace scope and select permissions from the discovered OAuth scope checklist. Complete the provider's sign-in and consent. Mack discovers tools after the callback and keeps them disabled pending review. Workspace connections share the authorizing account's upstream access under Mack's existing grants; choose personal for private access.
 
-Use Reconnect with OAuth when access is revoked or refresh fails. Reconnect requests the currently configured default scopes and invalidates tool approvals. To choose different scopes, create a new connection with the desired scope field. Disconnect deletes Mack's saved credentials; revoke the authorization in the provider's settings if you also want to remove the upstream grant.
+Use Reconnect with OAuth when access is revoked or refresh fails. Reconnect requests the currently configured default scopes and invalidates tool approvals. To choose different scopes, create a new connection with the desired permission selection. Disconnect deletes Mack's saved credentials; revoke the authorization in the provider's settings if you also want to remove the upstream grant.
 
 ## Security and validation
 
@@ -72,3 +72,11 @@ Use Reconnect with OAuth when access is revoked or refresh fails. Reconnect requ
 The test suite uses mocked OAuth servers through the real MCP SDK for discovery, DCR, PKCE exchange, failure cases and refresh. Live public discovery metadata was inspected for built-in providers; no real account consent or authenticated provider calls were performed during implementation.
 
 Provider references: [Linear MCP](https://linear.app/docs/mcp), [Notion's MCP integration guide](https://github.com/makenotion/notion-cookbook/blob/main/docs/mcp-client-integration.md), [GitHub MCP host integration](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md), [Slack MCP](https://docs.slack.dev/ai/slack-mcp-server/), [Stripe MCP](https://docs.stripe.com/mcp).
+
+### Permission selection
+
+The authenticated `/api/oauth/scopes` endpoint discovers the approved server's authorization and resource metadata without registering a client or creating an OAuth request. The UI lists their combined advertised scopes, preselecting only configured/provider defaults. Known scopes have friendly descriptions and access labels; unknown scopes are explicitly provider-defined. Discovery failures show a retry action and prevent starting with hidden defaults. Selecting no permissions cannot silently restore broader defaults.
+
+An app configured with an empty `scope` uses provider-managed permissions (for example GitHub Apps). Servers without published scopes use configured defaults when present, otherwise their consent screen. Tool approvals remain separate: no undocumented scope-to-tool mapping is inferred. Existing OAuth reconnects continue to use configured defaults.
+
+Description references: [Linear OAuth](https://linear.app/developers/oauth-2-0-authentication), [GitHub scopes](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps), [Slack MCP](https://docs.slack.dev/ai/slack-mcp-server/).

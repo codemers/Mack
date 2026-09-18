@@ -3816,3 +3816,47 @@ tbody tr:hover {
 .tool-review button {
   justify-self: start;
 }
+
+.oauth-permissions {
+  border: 0;
+  padding: 0;
+  margin: 18px 0;
+  min-width: 0;
+}
+.oauth-permissions legend {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.oauth-permission {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.oauth-permission input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  accent-color: #90a873;
+}
+.oauth-permission > span:first-of-type {
+  flex: 1;
+  min-width: 0;
+}
+.oauth-permission strong {
+  display: block;
+  font-size: 12px;
+}
+.oauth-permission small {
+  display: block;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 4px 0;
+  color: var(--muted);
+}
+.oauth-permission code {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
