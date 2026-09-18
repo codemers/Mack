@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit && npm run typecheck --workspace apps/web",
     "test": "node --import tsx --test tests/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build",
-    "db:migrate": "wrangler d1 migrations apply mack --config apps/api/wrangler.jsonc --remote",
+    "db:migrate": "wrangler d1 migrations apply DB --config apps/api/wrangler.jsonc --remote",
     "deploy:api": "wrangler deploy --config apps/api/wrangler.jsonc",
     "deploy:gateway": "wrangler deploy --config apps/gateway/wrangler.jsonc",
     "format": "prettier --write \"apps/**/*.{ts,tsx,css,json,jsonc,mjs}\" \"packages/**/*.ts\" \"scripts/**/*.ts\" \"tests/**/*.ts\" \"*.{json,md}\" \"docs/*.md\"",
