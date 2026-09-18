@@ -4,7 +4,7 @@
   "compatibility_date": "2026-03-10",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    "WEB_ORIGIN": "https://usemack.ai",
+    "WEB_ORIGIN": "https://mack-teal.vercel.app",
     "GATEWAY_URL": "https://mcp.usemack.ai/mcp",
     "MCP_ALLOWED_HOSTS": "api.githubcopilot.com,mcp.linear.app,mcp.notion.com,mcp.slack.com,mcp.stripe.com",
   },
