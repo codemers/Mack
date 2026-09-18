@@ -18,6 +18,8 @@ const env: Env = {
   GATEWAY_URL: 'http://127.0.0.1:8788/mcp',
   DEMO_MODE: process.env.DEMO_MODE ?? 'true',
   DEV_REMOTE_ORIGIN: 'http://127.0.0.1:8790',
+  OAUTH_CLIENTS_JSON: process.env.OAUTH_CLIENTS_JSON,
+  OAUTH_ALLOWED_ORIGINS: process.env.OAUTH_ALLOWED_ORIGINS,
   AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY,
   MCP_ALLOWED_HOSTS: process.env.MCP_ALLOWED_HOSTS,
 };

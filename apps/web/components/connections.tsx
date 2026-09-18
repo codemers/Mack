@@ -20,9 +20,9 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { AppData, Connection } from '@/lib/types';
-import { copy, mutate } from '@/lib/api';
+import { api, copy, mutate } from '@/lib/api';
 import {
   Badge,
   Empty,
@@ -306,7 +306,25 @@ export function AddConnection({
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [scope, setScope] = useState('personal');
-  const [auth, setAuth] = useState('bearer');
+  const [auth, setAuth] = useState('oauth');
+  const [oauthScope, setOauthScope] = useState('');
+  const [oauthConfig, setOauthConfig] = useState<{
+    callbackUrl: string;
+    providers: Record<string, { ready: boolean; defaultScope: string; appRequired: boolean }>;
+  } | null>(null);
+  useEffect(() => {
+    if (open)
+      api<typeof oauthConfig>('/oauth/providers')
+        .then(setOauthConfig)
+        .catch(() => setOauthConfig(null));
+  }, [open]);
+  const oauthProvider = (() => {
+    try {
+      return oauthConfig?.providers[new URL(url).hostname];
+    } catch {
+      return undefined;
+    }
+  })();
   const [credential, setCredential] = useState('');
   const [header, setHeader] = useState('X-API-Key');
   const action = useAction(data.refresh, data.notify);
@@ -336,6 +354,8 @@ export function AddConnection({
                 setProvider(p.id);
                 setName(p.name);
                 setUrl(p.url);
+                setAuth('oauth');
+                setOauthScope('');
               }}
             >
               <ProviderIcon provider={p.id} size={40} />
@@ -344,7 +364,7 @@ export function AddConnection({
                 <small>
                   {p.id === 'custom'
                     ? 'Connect using a server URL'
-                    : 'Use your MCP server credentials'}
+                    : 'Sign in with OAuth or use a token'}
                 </small>
               </span>
               <ChevronRight size={16} />
@@ -355,6 +375,20 @@ export function AddConnection({
         <form
           onSubmit={async (e) => {
             e.preventDefault();
+            if (auth === 'oauth') {
+              await action.run(async () => {
+                const result = await mutate<{ url: string }>('/oauth/start', 'POST', {
+                  name,
+                  provider,
+                  server_url: url,
+                  scope,
+                  workspace_id: scope === 'workspace' ? data.workspace : undefined,
+                  oauth_scope: oauthScope.trim() || undefined,
+                });
+                window.location.assign(result.url);
+              });
+              return;
+            }
             if (
               await action.run(
                 () =>
@@ -425,6 +459,7 @@ export function AddConnection({
           <label className="field">
             Authentication
             <select value={auth} onChange={(e) => setAuth(e.target.value)}>
+              <option value="oauth">OAuth sign-in</option>
               <option value="bearer">Bearer token</option>
               <option value="api_key">API key</option>
               <option value="none">No authentication</option>
@@ -441,7 +476,7 @@ export function AddConnection({
               />
             </label>
           )}
-          {auth !== 'none' && (
+          {auth !== 'none' && auth !== 'oauth' && (
             <label className="field">
               {auth === 'bearer' ? 'Bearer token' : 'API key'}
               <input
@@ -454,9 +489,29 @@ export function AddConnection({
               />
             </label>
           )}
-          <p className="form-hint">
-            Servers that require an OAuth sign-in flow are not supported yet.
-          </p>
+          {auth === 'oauth' && (
+            <>
+              <label className="field">
+                OAuth scopes{' '}
+                <input
+                  value={oauthScope}
+                  onChange={(e) => setOauthScope(e.target.value)}
+                  placeholder={oauthProvider?.defaultScope || 'Provider default'}
+                />
+              </label>
+              <p className="form-hint">
+                You’ll sign in with the provider, then return to review discovered tools. Linear
+                defaults to read-only; other providers use the permissions shown on their consent
+                screen.
+              </p>
+              {oauthProvider?.appRequired && !oauthProvider.ready && (
+                <p role="alert" className="form-hint">
+                  An administrator must configure this provider’s OAuth app before connecting.
+                  Register this callback URL: <code>{oauthConfig?.callbackUrl}</code>
+                </p>
+              )}
+            </>
+          )}
           <ErrorMessage error={action.error} />
           <div className="modal-footer">
             <Button
@@ -467,7 +522,12 @@ export function AddConnection({
             >
               Back
             </Button>
-            <Submit busy={action.busy}>Connect server</Submit>
+            <Submit
+              busy={action.busy}
+              disabled={auth === 'oauth' && oauthProvider?.ready === false}
+            >
+              {auth === 'oauth' ? 'Continue with OAuth' : 'Connect server'}
+            </Submit>
           </div>
         </form>
       )}
@@ -638,6 +698,27 @@ function ConnectionDetail({
           ))}
         {!c.tools.length && <p className="form-hint">No tools were advertised by this server.</p>}
       </div>
+      {c.canManage && c.oauth_provider && (
+        <Button
+          variant="secondary"
+          disabled={action.busy}
+          onClick={() =>
+            action.run(async () => {
+              const result = await mutate<{ url: string }>('/oauth/start', 'POST', {
+                connection_id: c.id,
+                name: c.name,
+                provider: c.provider,
+                server_url: c.server_url,
+                scope: c.scope,
+                workspace_id: c.workspace_id || undefined,
+              });
+              window.location.assign(result.url);
+            })
+          }
+        >
+          Reconnect with OAuth
+        </Button>
+      )}
       {rotating && (
         <form
           className="inline-form"
@@ -683,7 +764,7 @@ function ConnectionDetail({
           >
             {c.status === 'paused' ? 'Resume connection' : 'Pause connection'}
           </Button>
-          {c.auth_type !== 'none' && (
+          {c.auth_type !== 'none' && !c.oauth_provider && (
             <Button variant="ghost" size="sm" onClick={() => setRotating(!rotating)}>
               Update credentials
             </Button>

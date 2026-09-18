@@ -7,6 +7,7 @@ export interface User {
   email: string;
 }
 export interface Connection {
+  oauth_provider?: string | null;
   id: string;
   scope: 'personal' | 'workspace';
   user_id: string | null;

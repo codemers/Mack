@@ -1,3 +1,4 @@
+import { refreshCredentials, type OAuthState } from '../../oauth/src/index';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { first, type Env } from '../../db/src/index';
@@ -5,6 +6,7 @@ import { decrypt } from '../../crypto/src/index';
 import { HttpError, type Connection } from '../../shared/src/index';
 export interface Credentials {
   token: string;
+  oauth?: OAuthState;
   header?: string;
 }
 const defaultHosts = [
@@ -60,6 +62,15 @@ export async function withRemote<T>(
       row.encrypted_credentials,
       env.ENCRYPTION_KEY,
       connection.id,
+    );
+  }
+  if (credentials?.oauth) {
+    if (credentials.oauth.serverUrl !== connection.server_url)
+      throw new HttpError(409, 'OAuth endpoint changed. Reconnect this server.');
+    credentials = await refreshCredentials(
+      env,
+      connection.id,
+      credentials as Credentials & { oauth: OAuthState },
     );
   }
   const headers: Record<string, string> = {};

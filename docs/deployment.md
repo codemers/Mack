@@ -1,6 +1,6 @@
 # Deployment
 
-Deployment is prepared but not performed. The frontend targets Vercel and the two backend services target Cloudflare Workers, using one shared D1 database. You need your own accounts, domains, database ID, and encryption secret. Do not deploy the local fixture runner or enable `DEMO_MODE` in production.
+Staging is deployed on Vercel and Cloudflare. The frontend targets Vercel and the two backend services target Cloudflare Workers, using one shared D1 database. You need your own accounts, domains, database ID, and encryption secret. Do not deploy the local fixture runner or enable `DEMO_MODE` in production.
 
 ## Cloudflare
 
@@ -51,8 +51,10 @@ npx wrangler deploy --dry-run --config apps/gateway/wrangler.jsonc --outdir .dat
 
 After deployment, verify the API and gateway health endpoints, sign in, add a real server, create a least-privilege client key, and make a real MCP call. Verify that the call appears in Activity and a revoked key is rejected.
 
-This MVP has intentionally limited authentication: no OAuth authorization server, upstream OAuth refresh, password recovery, MFA, or automated email verification. Complete the required identity flows and establish audit retention/cleanup before opening registration broadly. See `architecture.md` for request limits, supported protocol behavior, session isolation, and operational constraints.
+This MVP has intentionally limited authentication: no OAuth authorization server for incoming AI clients, password recovery, MFA, or automated email verification. Complete the required identity flows and establish audit retention/cleanup before opening registration broadly. See `architecture.md` for request limits, supported protocol behavior, session isolation, and operational constraints.
 
 ### Jev classification
 
 Apply migration `0002_tool_reviews.sql` before deploying the API and gateway together. It disables existing real tools pending manager review. Set `AI_GATEWAY_API_KEY` as an API Worker secret (not on the web frontend); the gateway never calls Jev. See the README’s permission-review section for data-sharing details and the optional labeled evaluation command. Without a key, discovery and explicit manual review remain available.
+
+Upstream OAuth setup, required provider apps, callback URLs, and migration 0003 are documented in [OAuth setup](oauth.md).

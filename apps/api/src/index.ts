@@ -1,3 +1,10 @@
+import {
+  beginOAuth,
+  completeOAuth,
+  stateKey,
+  providers as oauthProviders,
+  type OAuthState,
+} from '../../../packages/oauth/src/index';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
@@ -9,6 +16,7 @@ import {
   passwordHash,
   checkPassword,
   encrypt,
+  decrypt,
 } from '../../../packages/crypto/src/index';
 import {
   visibleConnections,
@@ -142,6 +150,180 @@ app.get('/api/session', async (c) =>
     ),
   }),
 );
+app.get('/api/oauth/providers', async (c) => {
+  let configured: Record<string, { client_id?: string; client_secret?: string }> = {};
+  try {
+    configured = JSON.parse(c.env.OAUTH_CLIENTS_JSON || '{}');
+  } catch {}
+  return c.json({
+    callbackUrl: `${c.env.WEB_ORIGIN}/api/oauth/callback`,
+    providers: Object.fromEntries(
+      Object.entries(oauthProviders).map(([host, p]) => [
+        host,
+        {
+          defaultScope: p.defaultScope,
+          ready:
+            !p.appRequired ||
+            Boolean(configured[host]?.client_id && configured[host]?.client_secret),
+          appRequired: Boolean(p.appRequired),
+        },
+      ]),
+    ),
+  });
+});
+app.post('/api/oauth/start', async (c) => {
+  const data = z
+    .object({
+      name: nameSchema,
+      provider: z.string().max(30),
+      server_url: z.string().max(2048),
+      scope: z.enum(['personal', 'workspace']),
+      workspace_id: z.string().optional(),
+      oauth_scope: z.string().max(2000).optional(),
+      connection_id: z.string().optional(),
+    })
+    .parse(await c.req.json());
+  validateServerUrl(data.server_url, c.env);
+  if (data.scope === 'workspace') {
+    if (!data.workspace_id) throw new HttpError(400, 'Choose a workspace.');
+    await requireManager(c.env.DB, data.workspace_id, c.get('user').id);
+  }
+  if (data.connection_id) {
+    const existing = await managedConnection(c.env, data.connection_id, c.get('user').id);
+    if (
+      existing.server_url !== data.server_url ||
+      existing.scope !== data.scope ||
+      existing.workspace_id !== (data.workspace_id || null)
+    )
+      throw new HttpError(400, 'Reconnect must keep the same server and scope.');
+  }
+  await rateLimit(c.env.DB, `oauth:${c.get('user').id}`, 10);
+  const flow = await beginOAuth(c.env, data.server_url, data.oauth_scope);
+  const key = await stateKey(flow.state);
+  await run(c.env.DB, 'DELETE FROM oauth_requests WHERE expires_at<?', Date.now());
+  await run(
+    c.env.DB,
+    'INSERT INTO oauth_requests(state_hash,user_id,encrypted_payload,expires_at) VALUES(?,?,?,?)',
+    key,
+    c.get('user').id,
+    await encrypt({ data, oauth: flow.payload }, c.env.ENCRYPTION_KEY, key),
+    Date.now() + 10 * 60000,
+  );
+  return c.json({ url: flow.url });
+});
+app.get('/api/oauth/callback', async (c) => {
+  c.header('Referrer-Policy', 'no-referrer');
+  const state = c.req.query('state');
+  if (!state || state.length > 256) throw new HttpError(400, 'Invalid OAuth state. Start again.');
+  const key = await stateKey(state);
+  const pending = await first<{ encrypted_payload: string }>(
+    c.env.DB,
+    'DELETE FROM oauth_requests WHERE state_hash=? AND user_id=? AND expires_at>? RETURNING encrypted_payload',
+    key,
+    c.get('user').id,
+    Date.now(),
+  );
+  if (!pending) throw new HttpError(400, 'OAuth request expired or was already used. Start again.');
+  const finish = (result: string) =>
+    c.redirect(`${c.env.WEB_ORIGIN}/?oauth=${result}#connections`, 303);
+  if (c.req.query('error')) return finish('cancelled');
+  const code = c.req.query('code');
+  if (!code || code.length > 8192) return finish('failed');
+  const payload = await decrypt<{
+    data: {
+      name: string;
+      provider: string;
+      server_url: string;
+      scope: 'personal' | 'workspace';
+      workspace_id?: string;
+      connection_id?: string;
+    };
+    oauth: OAuthState;
+  }>(pending.encrypted_payload, c.env.ENCRYPTION_KEY, key);
+  const { data, oauth } = payload;
+  validateServerUrl(data.server_url, c.env);
+  if (oauth.redirectUri !== `${c.env.WEB_ORIGIN}/api/oauth/callback`) return finish('failed');
+  if (
+    ((oauth.info.authorizationServerMetadata as Record<string, unknown> | undefined)
+      ?.authorization_response_iss_parameter_supported &&
+      !c.req.query('iss')) ||
+    (c.req.query('iss') && c.req.query('iss') !== oauth.info.authorizationServerMetadata?.issuer)
+  )
+    return finish('failed');
+  if (data.scope === 'workspace')
+    await requireManager(c.env.DB, data.workspace_id!, c.get('user').id);
+  if (data.connection_id) await managedConnection(c.env, data.connection_id, c.get('user').id);
+  let credentials;
+  try {
+    credentials = await completeOAuth(c.env, oauth, code);
+  } catch {
+    return finish('failed');
+  }
+  const connectionId = data.connection_id || id('conn');
+  const connection: Connection = {
+    id: connectionId,
+    name: data.name,
+    provider: data.provider,
+    server_url: data.server_url,
+    scope: data.scope,
+    user_id: data.scope === 'personal' ? c.get('user').id : null,
+    workspace_id: data.scope === 'workspace' ? data.workspace_id! : null,
+    auth_type: 'bearer',
+    oauth_provider: new URL(data.server_url).hostname,
+    namespace: namespace(data.name, connectionId),
+    status: 'error',
+    is_demo: 0,
+    capabilities: '{}',
+    created_at: new Date().toISOString(),
+  };
+  const statements = [];
+  if (data.connection_id) {
+    statements.push(
+      c.env.DB.prepare(
+        "UPDATE connections SET auth_type='bearer',oauth_provider=?,status='error' WHERE id=?",
+      ).bind(connection.oauth_provider, connectionId),
+    );
+    statements.push(
+      c.env.DB.prepare(
+        "UPDATE tools SET enabled=0,review_state='pending' WHERE connection_id=?",
+      ).bind(connectionId),
+    );
+  } else
+    statements.push(
+      c.env.DB.prepare(
+        'INSERT INTO connections(id,scope,user_id,workspace_id,name,provider,namespace,server_url,auth_type,status,oauth_provider) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+      ).bind(
+        connection.id,
+        connection.scope,
+        connection.user_id,
+        connection.workspace_id,
+        connection.name,
+        connection.provider,
+        connection.namespace,
+        connection.server_url,
+        connection.auth_type,
+        connection.status,
+        connection.oauth_provider,
+      ),
+    );
+  statements.push(
+    c.env.DB.prepare(
+      "INSERT INTO connection_credentials(connection_id,encrypted_credentials) VALUES(?,?) ON CONFLICT(connection_id) DO UPDATE SET encrypted_credentials=excluded.encrypted_credentials,updated_at=datetime('now')",
+    ).bind(connectionId, await encrypt(credentials, c.env.ENCRYPTION_KEY, connectionId)),
+  );
+  await c.env.DB.batch(statements);
+  const saved = (await first<Connection>(
+    c.env.DB,
+    'SELECT * FROM connections WHERE id=?',
+    connectionId,
+  ))!;
+  try {
+    await saveDiscovery(c.env, saved, await discover(c.env, saved));
+  } catch {
+    return finish('discovery_failed');
+  }
+  return finish('connected');
+});
 app.patch('/api/profile', async (c) => {
   const data = z.object({ name: nameSchema }).parse(await c.req.json());
   await run(c.env.DB, 'UPDATE users SET name=? WHERE id=?', data.name, c.get('user').id);
@@ -300,6 +482,8 @@ app.patch('/api/connections/:id', async (c) => {
     })
     .parse(await c.req.json());
   if (data.token) {
+    if (connection.oauth_provider)
+      throw new HttpError(400, 'Use OAuth reconnect to update this connection.');
     if (connection.auth_type === 'none')
       throw new HttpError(400, 'This server does not use credentials.');
     await run(

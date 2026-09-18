@@ -43,7 +43,7 @@ The playground is a direct JSON tool runner, not a simulated LLM chat. Natural l
 
 Use **Add connection**, choose personal or workspace ownership, and enter a Streamable HTTP MCP URL with no auth, a bearer token, or an API key. API key headers must begin with `X-`. Tokens are encrypted before storage and never returned to the dashboard or downstream client.
 
-Outbound destinations are deliberately allowlisted to avoid turning the gateway into an arbitrary proxy. Defaults include `api.githubcopilot.com`, `mcp.linear.app`, `mcp.notion.com`, `mcp.slack.com`, and `mcp.stripe.com`. A listed host does not imply its authentication is supported: some providers require OAuth. To approve your own server for local development:
+Outbound destinations are deliberately allowlisted to avoid turning the gateway into an arbitrary proxy. Defaults include `api.githubcopilot.com`, `mcp.linear.app`, `mcp.notion.com`, `mcp.slack.com`, and `mcp.stripe.com`. OAuth is available for these providers; GitHub and Slack require registered apps. To approve your own server for local development:
 
 ```sh
 MCP_ALLOWED_HOSTS=mcp.your-company.com,api.githubcopilot.com npm run dev
@@ -51,7 +51,7 @@ MCP_ALLOWED_HOSTS=mcp.your-company.com,api.githubcopilot.com npm run dev
 
 Use the same comma-separated list on **both** deployed Workers. Only approve server hostnames you control or trust. Production URLs require HTTPS on port 443, reject credentials/query strings/fragments, and cannot redirect to another URL. The sole local HTTP exception is the explicitly configured fixture origin.
 
-**OAuth is not implemented.** Bearer-token integrations such as Cursor, Claude Code, and custom clients work; OAuth-only connector flows, including ChatGPT's connector setup, are not advertised as working. Personal access tokens only work when the upstream MCP server itself accepts them.
+**Upstream MCP OAuth is supported.** See [OAuth setup](docs/oauth.md). Mack itself still authenticates AI clients using bearer keys; it is not an OAuth authorization server. Bearer-token integrations such as Cursor, Claude Code, and custom clients work; OAuth-only connector flows, including ChatGPT's connector setup, are not advertised as working. Personal access tokens only work when the upstream MCP server itself accepts them.
 
 ## What is implemented
 
@@ -105,7 +105,7 @@ See [architecture and security](docs/architecture.md) and [deployment](docs/depl
 
 ## What remains
 
-This implements the plan's gateway/UI MVP and the core workspace and permission flows. It is not the complete enterprise roadmap. OAuth client authorization and upstream token refresh, conversational model integration, invitation email delivery, email verification/password recovery, MFA/SSO/SCIM, approvals, delegated identity, billing, persistent resource/prompt routing, KV caches, R2/Queue auditing, suspicious-request detection, and realtime sessions remain future work. No hosted resources have been provisioned and nothing has been deployed.
+This implements the plan's gateway/UI MVP and the core workspace and permission flows. It is not the complete enterprise roadmap. OAuth authorization for incoming AI clients, conversational model integration, invitation email delivery, email verification/password recovery, MFA/SSO/SCIM, approvals, delegated identity, billing, persistent resource/prompt routing, KV caches, R2/Queue auditing, suspicious-request detection, and realtime sessions remain future work. Staging uses Vercel and Cloudflare Workers; deployment configuration is documented separately.
 
 ### Jev-assisted permission review
 

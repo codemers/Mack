@@ -69,3 +69,5 @@ No runtime cache holds authorization decisions. D1 queries currently favor clari
 - [Official TypeScript SDK v1 server guide](https://ts.sdk.modelcontextprotocol.io/server)
 
 The included SDK-to-gateway integration test initializes a real SDK client, lists two upstreams' tools, executes calls against both, verifies audit entries, and checks token rotation/revocation.
+
+Upstream OAuth uses the shared `packages/oauth` module for SDK-based discovery, PKCE exchange, encrypted state and refresh. `connections.oauth_provider` distinguishes OAuth-backed bearer credentials from manual tokens without changing existing grant semantics. See [OAuth setup](oauth.md) for trust boundaries and provider configuration.

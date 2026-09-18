@@ -91,6 +91,20 @@ export default function Home() {
       if (valid.includes(value)) setPage(value);
     };
     onHash();
+    const oauthResult = new URLSearchParams(location.search).get('oauth');
+    if (oauthResult) {
+      const messages: Record<string, string> = {
+        connected: 'OAuth connected. Review tools before enabling them.',
+        cancelled: 'OAuth authorization was cancelled.',
+        failed: 'OAuth authorization failed. Please try connecting again.',
+        discovery_failed:
+          'OAuth connected, but discovery failed. Open the connection and refresh tools.',
+      };
+      setToast(messages[oauthResult] || 'OAuth flow finished.');
+      const clean = new URL(location.href);
+      clean.searchParams.delete('oauth');
+      history.replaceState(null, '', clean);
+    }
     setInvite(new URLSearchParams(location.search).get('invite') || '');
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);

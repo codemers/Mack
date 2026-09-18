@@ -10,6 +10,8 @@ export interface Database {
 }
 export interface Env {
   AI_GATEWAY_API_KEY?: string;
+  OAUTH_CLIENTS_JSON?: string;
+  OAUTH_ALLOWED_ORIGINS?: string;
   DB: Database;
   ENCRYPTION_KEY: string;
   WEB_ORIGIN: string;

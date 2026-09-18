@@ -36,6 +36,7 @@ export interface Tool {
   review_note: string | null;
 }
 export interface Connection {
+  oauth_provider?: string | null;
   id: string;
   name: string;
   provider: string;
