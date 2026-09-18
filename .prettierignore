@@ -1,0 +1,8 @@
+node_modules
+.next
+.data
+.wrangler
+package-lock.json
+apps/web/next-env.d.ts
+apps/web/AGENTS.md
+apps/web/CLAUDE.md

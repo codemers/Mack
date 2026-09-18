@@ -1,0 +1,41 @@
+{
+  "name": "mack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "node --import tsx scripts/dev.ts",
+    "dev:web": "npm run dev --workspace apps/web",
+    "build": "npm run build --workspace apps/web",
+    "typecheck": "tsc --noEmit && npm run typecheck --workspace apps/web",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build",
+    "db:migrate": "wrangler d1 migrations apply mack --config apps/api/wrangler.jsonc --remote",
+    "deploy:api": "wrangler deploy --config apps/api/wrangler.jsonc",
+    "deploy:gateway": "wrangler deploy --config apps/gateway/wrangler.jsonc",
+    "format": "prettier --write \"apps/**/*.{ts,tsx,css,json,jsonc,mjs}\" \"packages/**/*.ts\" \"scripts/**/*.ts\" \"tests/**/*.ts\" \"*.{json,md}\" \"docs/*.md\"",
+    "format:check": "prettier --check \"apps/**/*.{ts,tsx,css,json,jsonc,mjs}\" \"packages/**/*.ts\" \"scripts/**/*.ts\" \"tests/**/*.ts\" \"*.{json,md}\" \"docs/*.md\"",
+    "eval:jev": "node --import tsx scripts/evaluate-jev.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/gateway": "^4.0.86",
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "ai": "^7.0.106",
+    "ajv": "^8.17.1",
+    "hono": "^4.7.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "prettier": "^3.9.8",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0",
+    "wrangler": "^4.10.0"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

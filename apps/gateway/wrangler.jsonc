@@ -1,0 +1,14 @@
+{
+  "name": "mack-gateway",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-03-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "WEB_ORIGIN": "https://usemack.ai",
+    "GATEWAY_URL": "https://mcp.usemack.ai/mcp",
+    "MCP_ALLOWED_HOSTS": "api.githubcopilot.com,mcp.linear.app,mcp.notion.com,mcp.slack.com,mcp.stripe.com",
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "mack", "database_id": "REPLACE_WITH_D1_DATABASE_ID" },
+  ],
+}
