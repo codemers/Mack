@@ -1,4 +1,4 @@
-import Ajv from 'ajv';
+import { validateToolArguments } from './schema';
 import { first, run, type Env } from '../../../packages/db/src/index';
 import { canUse } from '../../../packages/permissions/src/index';
 import { withRemote } from '../../../packages/mcp/src/index';
@@ -9,7 +9,6 @@ import {
   type Connection,
   type Tool,
 } from '../../../packages/shared/src/index';
-const ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
 const sensitive = /token|password|secret|authorization|credential|api.?key/i;
 function redact(value: unknown, depth = 0): unknown {
   if (depth > 6) return '[nested]';
@@ -44,7 +43,7 @@ export async function executeTool(
     }
     let valid: boolean;
     try {
-      valid = Boolean(ajv.validate(JSON.parse(tool.input_schema), args));
+      valid = validateToolArguments(tool.input_schema, args);
     } catch {
       throw new HttpError(400, 'The remote tool schema is not supported.');
     }

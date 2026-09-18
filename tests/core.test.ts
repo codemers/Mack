@@ -599,3 +599,27 @@ test('MCP transport uses Worker-compatible redirects and never follows upstream 
     globalThis.fetch = previous;
   }
 });
+
+test('2020-12 remote schemas validate before execution and reject extra arguments', async () => {
+  const schema = {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    type: 'object',
+    properties: { query: { type: 'string' } },
+    required: ['query'],
+    additionalProperties: false,
+  };
+  await run(
+    db,
+    'UPDATE tools SET input_schema=? WHERE public_name=?',
+    JSON.stringify(schema),
+    'github_list_issues',
+  );
+  const result = await executeTool(env, 'user_demo', 'github_list_issues', { query: 'test' });
+  assert.notEqual(result.isError, true);
+  for (const args of [{ query: 'test', extra: true }, { query: 123 }, {}]) {
+    await assert.rejects(
+      () => executeTool(env, 'user_demo', 'github_list_issues', args),
+      /Arguments do not match/,
+    );
+  }
+});
