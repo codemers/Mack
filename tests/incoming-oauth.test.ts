@@ -226,14 +226,17 @@ test('PKCE mismatch, reused codes and resource mismatch are rejected', async () 
   const { callback } = await completeConsent(await beginAuthorize(client_id, challenge));
   const code = callback.searchParams.get('code') || '';
   assert.equal((await exchange(client_id, code, 'a'.repeat(43))).status, 400);
-  const ok = await exchange(client_id, code, verifier);
-  assert.equal(ok.status, 200);
   assert.equal((await exchange(client_id, code, verifier)).status, 400);
   const { verifier: v2, challenge: c2 } = pkce();
   const second = await completeConsent(await beginAuthorize(client_id, c2));
+  const code2 = second.callback.searchParams.get('code') || '';
+  assert.equal((await exchange(client_id, code2, v2)).status, 200);
+  assert.equal((await exchange(client_id, code2, v2)).status, 400);
+  const { verifier: v3, challenge: c3 } = pkce();
+  const third = await completeConsent(await beginAuthorize(client_id, c3));
   assert.equal(
     (
-      await exchange(client_id, second.callback.searchParams.get('code') || '', v2, {
+      await exchange(client_id, third.callback.searchParams.get('code') || '', v3, {
         resource: 'https://evil.example/mcp',
       })
     ).status,

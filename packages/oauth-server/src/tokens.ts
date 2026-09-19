@@ -268,7 +268,7 @@ export async function approveIncomingAuthorization(
     const name = (data.name?.trim() || payload.client_name).slice(0, 80);
     let client = await first<{ id: string }>(
       env.DB,
-      'SELECT id FROM clients WHERE user_id=? AND oauth_client_id=? AND IFNULL(workspace_id,"")=? AND revoked_at IS NULL',
+      "SELECT id FROM clients WHERE user_id=? AND oauth_client_id=? AND IFNULL(workspace_id,'')=? AND revoked_at IS NULL",
       user.id,
       payload.oauth_client_id,
       data.workspace_id || '',
