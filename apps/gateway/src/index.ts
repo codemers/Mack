@@ -6,24 +6,26 @@ import {
   McpError,
   ErrorCode,
 } from '@modelcontextprotocol/sdk/types.js';
-import { authenticateClient, checkOrigin, rateLimit } from '../../../packages/auth/src/index';
+import { authenticateClient, rateLimit } from '../../../packages/auth/src/index';
 import { availableTools } from '../../../packages/permissions/src/index';
 import { run, type Env } from '../../../packages/db/src/index';
 import { HttpError } from '../../../packages/shared/src/index';
 import {
   challengeHeaders,
   handleAuthorizationServer,
+  withCors,
 } from '../../../packages/oauth-server/src/index';
 import { executeTool } from './service';
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health') return Response.json({ service: 'mack-gateway', status: 'ok' });
+    if (request.method === 'OPTIONS' && url.pathname === '/mcp')
+      return withCors(new Response(null, { status: 204 }));
     const oauth = await handleAuthorizationServer(request, env);
     if (oauth) return oauth;
     if (url.pathname !== '/mcp') return Response.json({ error: 'Not found' }, { status: 404 });
     try {
-      checkOrigin(request, env);
       const client = await authenticateClient(request, env);
       await rateLimit(env.DB, `client:${client.id}`);
       if (Number(request.headers.get('content-length') || 0) > 1024 * 1024)
@@ -104,23 +106,25 @@ export default {
         "UPDATE clients SET last_used_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
         client.id,
       );
-      return response;
+      return withCors(response);
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;
-      return Response.json(
-        {
-          jsonrpc: '2.0',
-          id: null,
-          error: {
-            code: -32000,
-            message: e instanceof HttpError ? e.message : 'Gateway request failed.',
+      return withCors(
+        Response.json(
+          {
+            jsonrpc: '2.0',
+            id: null,
+            error: {
+              code: -32000,
+              message: e instanceof HttpError ? e.message : 'Gateway request failed.',
+            },
           },
-        },
-        {
-          status,
-          headers:
-            status === 401 ? challengeHeaders(env, request.headers.has('authorization')) : {},
-        },
+          {
+            status,
+            headers:
+              status === 401 ? challengeHeaders(env, request.headers.has('authorization')) : {},
+          },
+        ),
       );
     }
   },

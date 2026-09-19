@@ -16,6 +16,28 @@ External MCP clients such as ChatGPT, Claude, and Cursor can connect to the Mack
 
 Unauthenticated `/mcp` requests return `401` with a `WWW-Authenticate` challenge that includes `resource_metadata` and `scope="mcp"`. The user signs in with their Mack session, chooses workspace context, and grants per-connection access. Those grants use the same client permission model as bearer keys. OAuth access tokens are bound to the gateway resource URL. Reconnect from the AI client to refresh access; rotating a key in the dashboard is disabled for OAuth clients.
 
+### Claude custom connector
+
+In Claude, add a custom connector and paste the gateway MCP URL, for example `https://mack-gateway-staging.blogue.workers.dev/mcp`. Leave **OAuth Client ID** blank. Claude registers itself through Mack’s `/oauth/register` endpoint, then opens Mack sign-in in the browser.
+
+If Claude shows “Couldn’t register with Mack’s sign-in service” and an `ofid_…` reference, registration never completed.
+
+Incoming OAuth must be deployed first. Staging still serving `{"error":"Not found"}` for `/.well-known/oauth-authorization-server` or `POST /oauth/register` cannot complete Claude DCR. Apply migration `0004_incoming_oauth.sql`, then deploy both Workers. Confirm discovery yourself:
+
+```sh
+curl -sI https://mack-gateway-staging.blogue.workers.dev/mcp
+curl -s https://mack-gateway-staging.blogue.workers.dev/.well-known/oauth-authorization-server
+curl -s -D - -X POST https://mack-gateway-staging.blogue.workers.dev/oauth/register \
+  -H 'content-type: application/json' \
+  -d '{"client_name":"Claude","redirect_uris":["https://claude.ai/api/mcp/auth_callback","https://claude.com/api/mcp/auth_callback"],"token_endpoint_auth_method":"none"}'
+```
+
+Protected-resource metadata and registration must return JSON, not `Not found`. A successful register response is `201` with a `client_id`.
+
+Claude’s connector broker often cannot reach `*.workers.dev` hostnames. Put the gateway on a normal HTTPS hostname (for example `mcp.usemack.ai`) and use that URL in Claude. The `ofid_…` value is Claude’s internal flow id. Mack cannot look it up; share it with Anthropic support if discovery and registration already succeed from `curl`.
+
+Claude Code can still use a bearer client key from the Mack dashboard if you do not need Claude.ai’s OAuth connector.
+
 Apply migration `0004_incoming_oauth.sql` before deploying both Workers:
 
 ```sh

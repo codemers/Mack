@@ -60,10 +60,19 @@ export function corsHeaders(): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, MCP-Protocol-Version',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, MCP-Protocol-Version',
+    'Access-Control-Expose-Headers': 'WWW-Authenticate, MCP-Session-Id',
     'Access-Control-Max-Age': '86400',
     'Cache-Control': 'no-store',
   };
+}
+
+export function withCors(response: Response) {
+  const headers = new Headers(response.headers);
+  for (const [key, value] of Object.entries(corsHeaders())) {
+    if (!headers.has(key)) headers.set(key, value);
+  }
+  return new Response(response.body, { status: response.status, headers });
 }
 
 export function oauthJson(body: unknown, status = 200, extra: Record<string, string> = {}) {
@@ -73,6 +82,10 @@ export function oauthJson(body: unknown, status = 200, extra: Record<string, str
 export function oauthErrorResponse(error: unknown) {
   if (error instanceof OAuthError)
     return oauthJson({ error: error.error, error_description: error.message }, error.status);
+  if (error instanceof HttpError) {
+    const code = error.status === 429 ? 'temporarily_unavailable' : 'invalid_request';
+    return oauthJson({ error: code, error_description: error.message }, error.status);
+  }
   console.error('OAuth error:', error instanceof Error ? error.name : 'Unknown');
   return oauthJson(
     { error: 'server_error', error_description: 'The request could not be completed.' },

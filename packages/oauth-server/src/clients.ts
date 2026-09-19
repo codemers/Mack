@@ -22,10 +22,36 @@ export function parseRedirectUris(value: string) {
   return JSON.parse(value) as string[];
 }
 
+function asStringList(value: unknown) {
+  if (typeof value === 'string' && value.trim()) return [value];
+  if (Array.isArray(value)) return value;
+  return [];
+}
+
 function validateRedirectList(uris: unknown) {
-  if (!Array.isArray(uris) || !uris.length || uris.length > 8)
-    throw new OAuthError('invalid_redirect_uri', 'Provide between 1 and 8 redirect URIs.');
-  return [...new Set(uris.map((uri) => assertRedirectUri(String(uri).slice(0, 2048))))];
+  const list = asStringList(uris);
+  if (!list.length || list.length > 16)
+    throw new OAuthError('invalid_redirect_uri', 'Provide between 1 and 16 redirect URIs.');
+  return [...new Set(list.map((uri) => assertRedirectUri(String(uri).slice(0, 2048))))];
+}
+
+function supportedGrants(value: unknown) {
+  const requested = asStringList(value).map(String);
+  const grants = [
+    ...new Set(
+      requested.filter((grant) => grant === 'authorization_code' || grant === 'refresh_token'),
+    ),
+  ];
+  if (!grants.includes('authorization_code')) grants.unshift('authorization_code');
+  if (!grants.includes('refresh_token')) grants.push('refresh_token');
+  return grants;
+}
+
+function supportedResponseTypes(value: unknown) {
+  const requested = asStringList(value).map(String);
+  if (requested.length && requested.every((type) => type !== 'code'))
+    throw new OAuthError('invalid_client_metadata', 'Only the code response type is supported.');
+  return ['code'];
 }
 
 export function registeredRedirect(client: OAuthClientRow, redirectUri: string) {
@@ -165,11 +191,11 @@ export async function resolveOAuthClient(env: Env, clientId: string) {
 }
 
 export async function registerOAuthClient(request: Request, env: Env) {
-  await rateLimit(env.DB, `oauth-dcr:${await hash(requestIp(request))}`, 20, 3600000);
+  await rateLimit(env.DB, `oauth-dcr:${await hash(requestIp(request))}`, 120, 60000);
   if (Number(request.headers.get('content-length') || 0) > 16 * 1024)
     throw new OAuthError('invalid_client_metadata', 'Registration request is too large.');
   const type = request.headers.get('content-type') || '';
-  if (type && !type.startsWith('application/json'))
+  if (type && !type.split(';')[0].trim().startsWith('application/json'))
     throw new OAuthError('invalid_client_metadata', 'Register with an application/json body.');
   let data: Record<string, unknown>;
   try {
@@ -179,25 +205,16 @@ export async function registerOAuthClient(request: Request, env: Env) {
   }
   const redirectUris = validateRedirectList(data.redirect_uris);
   const method =
-    typeof data.token_endpoint_auth_method === 'string' ? data.token_endpoint_auth_method : 'none';
+    typeof data.token_endpoint_auth_method === 'string' && data.token_endpoint_auth_method
+      ? data.token_endpoint_auth_method
+      : 'none';
   if (method !== 'none' && method !== 'client_secret_post' && method !== 'client_secret_basic')
     throw new OAuthError(
       'invalid_client_metadata',
       'Unsupported token endpoint authentication method.',
     );
-  const grantTypes = Array.isArray(data.grant_types)
-    ? data.grant_types.map(String)
-    : ['authorization_code', 'refresh_token'];
-  if (grantTypes.some((g) => g !== 'authorization_code' && g !== 'refresh_token'))
-    throw new OAuthError(
-      'invalid_client_metadata',
-      'Only authorization_code and refresh_token grants are supported.',
-    );
-  const responseTypes = Array.isArray(data.response_types)
-    ? data.response_types.map(String)
-    : ['code'];
-  if (responseTypes.some((g) => g !== 'code'))
-    throw new OAuthError('invalid_client_metadata', 'Only the code response type is supported.');
+  const grantTypes = supportedGrants(data.grant_types);
+  const responseTypes = supportedResponseTypes(data.response_types);
   const confidential = method !== 'none';
   const secret = confidential
     ? btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
@@ -217,8 +234,8 @@ export async function registerOAuthClient(request: Request, env: Env) {
     token_endpoint_auth_method: method,
     client_secret_hash: secret ? await hash(secret) : null,
     redirect_uris: JSON.stringify(redirectUris),
-    grant_types: JSON.stringify([...new Set([...grantTypes, 'refresh_token'])]),
-    response_types: JSON.stringify(['code']),
+    grant_types: JSON.stringify(grantTypes),
+    response_types: JSON.stringify(responseTypes),
     metadata: JSON.stringify(data).slice(0, 16 * 1024),
     kind: 'dcr',
     fetched_at: Date.now(),

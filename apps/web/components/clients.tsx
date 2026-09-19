@@ -495,8 +495,8 @@ function OauthHelp({
     <Modal
       open={open}
       onClose={onClose}
-      title="Connect ChatGPT with OAuth"
-      description="Add Mack as a connector. ChatGPT will sign in with your Mack account and ask which tools to share."
+      title="Connect ChatGPT or Claude with OAuth"
+      description="Add Mack as a custom connector. The app signs in with your Mack account and asks which tools to share."
     >
       <label className="field">
         Mack endpoint
@@ -508,8 +508,8 @@ function OauthHelp({
         </div>
       </label>
       <p className="form-hint">
-        In ChatGPT, add a connector or MCP server and paste this URL. Complete Mack’s sign-in and
-        choose connection access. Claude and other OAuth MCP clients use the same endpoint.
+        Paste this URL into ChatGPT or Claude as a custom connector. Leave the OAuth Client ID blank
+        so Mack can register the app. Complete Mack’s sign-in and choose connection access.
       </p>
       <div className="modal-footer">
         <Button onClick={onClose}>Done</Button>

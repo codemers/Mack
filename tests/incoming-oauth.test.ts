@@ -187,6 +187,67 @@ test('unauthenticated MCP requests advertise protected resource metadata', async
   assert.equal((await gatewayRequest('/.well-known/openid-configuration')).status, 200);
 });
 
+test('Claude DCR payloads register on /oauth/register and /register', async () => {
+  const payload = {
+    client_name: 'Claude',
+    redirect_uris: [
+      'https://claude.ai/api/mcp/auth_callback',
+      'https://claude.com/api/mcp/auth_callback',
+    ],
+    token_endpoint_auth_method: 'none',
+    grant_types: ['authorization_code', 'refresh_token', 'implicit'],
+    response_types: ['code'],
+    scope: 'mcp openid profile email',
+  };
+  const registered = await gatewayRequest('/oauth/register', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(payload),
+  });
+  assert.equal(registered.status, 201);
+  const body = (await registered.json()) as {
+    client_id: string;
+    token_endpoint_auth_method: string;
+    grant_types: string[];
+    redirect_uris: string[];
+  };
+  assert.ok(body.client_id);
+  assert.equal(body.token_endpoint_auth_method, 'none');
+  assert.deepEqual(body.grant_types, ['authorization_code', 'refresh_token']);
+  assert.deepEqual(body.redirect_uris, payload.redirect_uris);
+  const alias = await gatewayRequest('/register', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      client_name: 'Claude',
+      redirect_uris: 'https://claude.ai/api/mcp/auth_callback',
+    }),
+  });
+  assert.equal(alias.status, 201);
+  const preflight = await gatewayRequest('/mcp', {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://claude.ai',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type, mcp-protocol-version',
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), '*');
+  const challenge = await gatewayRequest('/mcp', {
+    method: 'POST',
+    headers: {
+      Origin: 'https://claude.ai',
+      Accept: 'application/json, text/event-stream',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
+  });
+  assert.equal(challenge.status, 401);
+  assert.equal(challenge.headers.get('access-control-allow-origin'), '*');
+  assert.match(challenge.headers.get('access-control-expose-headers') || '', /WWW-Authenticate/i);
+});
+
 test('OAuth DCR, PKCE, consent and token exchange can list granted tools', async () => {
   const { verifier, challenge } = pkce();
   assert.equal(await pkceChallenge(verifier), challenge);

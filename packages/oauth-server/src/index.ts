@@ -3,7 +3,7 @@ import { corsHeaders, mcpPath, oauthErrorResponse, oauthJson } from './util';
 import { registerOAuthClient } from './clients';
 import { exchangeToken, metadataDocument, revokeToken, startAuthorization } from './tokens';
 
-export { challengeHeaders, issuer, resourceUrl } from './util';
+export { challengeHeaders, issuer, resourceUrl, withCors } from './util';
 export {
   approveIncomingAuthorization,
   denyIncomingAuthorization,
@@ -26,6 +26,7 @@ function oauthPath(pathname: string, env: Env) {
     path === '/oauth/authorize' ||
     path === '/oauth/token' ||
     path === '/oauth/register' ||
+    path === '/register' ||
     path === '/oauth/revoke' ||
     (suffix && path === `${suffix}/.well-known/openid-configuration`)
   );
@@ -62,7 +63,7 @@ export async function handleAuthorizationServer(
         );
       return oauthJson(meta.authorizationServer);
     }
-    if (path === '/oauth/register') {
+    if (path === '/oauth/register' || path === '/register') {
       if (request.method !== 'POST')
         return oauthJson(
           { error: 'invalid_request', error_description: 'Method not allowed.' },
