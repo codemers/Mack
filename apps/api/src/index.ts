@@ -6,6 +6,11 @@ import {
   providers as oauthProviders,
   type OAuthState,
 } from '../../../packages/oauth/src/index';
+import {
+  approveIncomingAuthorization,
+  denyIncomingAuthorization,
+  incomingAuthorizationDetails,
+} from '../../../packages/oauth-server/src/index';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
@@ -330,6 +335,24 @@ app.get('/api/oauth/callback', async (c) => {
   }
   return finish('connected');
 });
+app.get('/api/oauth/incoming/:id', async (c) =>
+  c.json(await incomingAuthorizationDetails(c.env, c.req.param('id'), c.get('user').id)),
+);
+app.post('/api/oauth/incoming/:id/deny', async (c) =>
+  c.json(await denyIncomingAuthorization(c.env, c.req.param('id'))),
+);
+app.post('/api/oauth/incoming/:id/approve', async (c) => {
+  const data = z
+    .object({
+      name: nameSchema.optional(),
+      workspace_id: z.string().nullable().optional(),
+      permissions: z
+        .array(z.object({ connection_id: z.string(), permission: permissionSchema }))
+        .max(100),
+    })
+    .parse(await c.req.json());
+  return c.json(await approveIncomingAuthorization(c.env, c.req.param('id'), c.get('user'), data));
+});
 app.patch('/api/profile', async (c) => {
   const data = z.object({ name: nameSchema }).parse(await c.req.json());
   await run(c.env.DB, 'UPDATE users SET name=? WHERE id=?', data.name, c.get('user').id);
@@ -569,7 +592,7 @@ app.get('/api/clients', async (c) =>
   c.json({
     clients: await all(
       c.env.DB,
-      'SELECT id,user_id,workspace_id,name,type,token_prefix,last_used_at,revoked_at,created_at FROM clients WHERE user_id=? ORDER BY created_at DESC',
+      'SELECT id,user_id,workspace_id,name,type,token_prefix,last_used_at,revoked_at,created_at,oauth_client_id FROM clients WHERE user_id=? ORDER BY created_at DESC',
       c.get('user').id,
     ),
     permissions: await all(
@@ -635,6 +658,11 @@ async function ownedClient(env: Env, clientId: string, userId: string) {
 }
 app.post('/api/clients/:id/rotate', async (c) => {
   const client = await ownedClient(c.env, c.req.param('id'), c.get('user').id);
+  if (client.oauth_client_id)
+    throw new HttpError(
+      400,
+      'OAuth clients refresh through the connected app. Revoke this client to disconnect it.',
+    );
   const value = token();
   await run(
     c.env.DB,

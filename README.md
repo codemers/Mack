@@ -31,11 +31,11 @@ SQLite state and the local encryption key persist in `.data/` and are ignored by
 ## Try the full flow
 
 1. Open **Connections → GitHub** to inspect discovered tools. Toggle a read tool and see its availability change. Write and admin tools are disabled until explicitly enabled.
-2. In **Clients**, create a client, choose the workspace context, and grant GitHub and Linear **Read only** access. Save the one-time client key.
-3. Configure a compatible Streamable HTTP MCP client with the endpoint and `Authorization: Bearer <key>`. A configuration example is shown immediately after creation.
+2. In **Clients**, connect ChatGPT with the Mack endpoint (OAuth) or create a client key for Cursor, Claude Code, or a custom client. Grant GitHub and Linear **Read only** access.
+3. Configure a compatible Streamable HTTP MCP client with the endpoint. OAuth clients complete Mack sign-in; bearer clients use `Authorization: Bearer <key>`.
 4. The client sees `github_list_issues` and `linear_search_issues`, and routes each call to the right demo server. Real connections receive collision-resistant namespaces.
 5. Try the same tools in **Playground** and inspect **Activity** for status, duration, and redacted arguments.
-6. Revoke or rotate the client key. The old credential immediately stops working.
+6. Revoke an OAuth client or rotate a bearer key. The old credential immediately stops working.
 
 The playground is a direct JSON tool runner, not a simulated LLM chat. Natural language reasoning belongs to the connected AI client. There is no LLM provider key needed to run Mack.
 
@@ -51,7 +51,7 @@ MCP_ALLOWED_HOSTS=mcp.your-company.com,api.githubcopilot.com npm run dev
 
 Use the same comma-separated list on **both** deployed Workers. Only approve server hostnames you control or trust. Production URLs require HTTPS on port 443, reject credentials/query strings/fragments, and cannot redirect to another URL. The sole local HTTP exception is the explicitly configured fixture origin.
 
-**Upstream MCP OAuth is supported.** See [OAuth setup](docs/oauth.md). Mack itself still authenticates AI clients using bearer keys; it is not an OAuth authorization server. Bearer-token integrations such as Cursor, Claude Code, and custom clients work; OAuth-only connector flows, including ChatGPT's connector setup, are not advertised as working. Personal access tokens only work when the upstream MCP server itself accepts them.
+**MCP OAuth is supported for incoming AI clients and upstream servers.** See [OAuth setup](docs/oauth.md). ChatGPT and other OAuth-only connectors sign in through Mack. Bearer-token integrations such as Cursor, Claude Code, and custom clients still work. Personal access tokens only work when the upstream MCP server itself accepts them.
 
 ## What is implemented
 
@@ -81,6 +81,8 @@ packages/
   auth/                Session/client authentication and rate limits
   crypto/              Credential encryption, password and token hashing
   mcp/                 Upstream SDK client and outbound restrictions
+  oauth/               Mack as OAuth client to upstream MCP servers
+  oauth-server/        Mack as OAuth authorization server for AI clients
   permissions/         Shared permission evaluator
   shared/              Domain types and errors
   tool-registry/       Discovery, risk classification, public tool mapping
@@ -105,7 +107,7 @@ See [architecture and security](docs/architecture.md) and [deployment](docs/depl
 
 ## What remains
 
-This implements the plan's gateway/UI MVP and the core workspace and permission flows. It is not the complete enterprise roadmap. OAuth authorization for incoming AI clients, conversational model integration, invitation email delivery, email verification/password recovery, MFA/SSO/SCIM, approvals, delegated identity, billing, persistent resource/prompt routing, KV caches, R2/Queue auditing, suspicious-request detection, and realtime sessions remain future work. Staging uses Vercel and Cloudflare Workers; deployment configuration is documented separately.
+This implements the plan's gateway/UI MVP and the core workspace and permission flows. It is not the complete enterprise roadmap. Conversational model integration, invitation email delivery, email verification/password recovery, MFA/SSO/SCIM, approvals, delegated identity, billing, persistent resource/prompt routing, KV caches, R2/Queue auditing, suspicious-request detection, and realtime sessions remain future work. Staging uses Vercel and Cloudflare Workers; deployment configuration is documented separately.
 
 ### Jev-assisted permission review
 

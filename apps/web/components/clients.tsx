@@ -4,7 +4,6 @@ import {
   Check,
   ChevronRight,
   Copy,
-  KeyRound,
   Laptop,
   Link2,
   Plus,
@@ -23,6 +22,7 @@ export function Clients({ data }: { data: AppData }) {
   const [type, setType] = useState('cursor');
   const [selected, setSelected] = useState<string | null>(null);
   const [secret, setSecret] = useState<{ token: string; endpoint: string } | null>(null);
+  const [oauthHelp, setOauthHelp] = useState(false);
   const clients = data.clients.filter((c) => !c.revoked_at);
   const current = clients.find((c) => c.id === selected);
   return (
@@ -68,9 +68,9 @@ export function Clients({ data }: { data: AppData }) {
                 </p>
               </div>
               <Badge color={c.last_used_at ? 'green' : 'neutral'}>
-                {c.last_used_at ? 'Connected' : 'Ready to connect'}
+                {c.oauth_client_id ? 'OAuth' : c.last_used_at ? 'Connected' : 'Ready to connect'}
               </Badge>
-              <code>{c.token_prefix}••••••</code>
+              <code>{c.oauth_client_id ? 'Connected with OAuth' : `${c.token_prefix}••••••`}</code>
               <ChevronRight size={17} />
             </button>
           ))}
@@ -95,6 +95,11 @@ export function Clients({ data }: { data: AppData }) {
       <div className="quick-client-grid">
         {[
           {
+            id: 'chatgpt',
+            name: 'ChatGPT',
+            text: 'Connect with OAuth. No client key to paste.',
+          },
+          {
             id: 'claude',
             name: 'Claude Code',
             text: 'Bring your connected world to the terminal.',
@@ -110,6 +115,10 @@ export function Clients({ data }: { data: AppData }) {
             key={c.id}
             className="quick-client"
             onClick={() => {
+              if (c.id === 'chatgpt') {
+                setOauthHelp(true);
+                return;
+              }
               setType(c.id);
               setAdding(true);
             }}
@@ -125,8 +134,8 @@ export function Clients({ data }: { data: AppData }) {
       </div>
       <p className="privacy-note">
         <ShieldCheck size={16} />
-        Bearer-token clients are supported. ChatGPT and other OAuth-only connectors need a future
-        OAuth integration.
+        ChatGPT and other OAuth-only connectors sign in through Mack. Cursor, Claude Code, and
+        custom clients can still use a bearer key.
       </p>
       <CreateClient
         key={`${type}-${adding}-${data.workspace}`}
@@ -145,6 +154,12 @@ export function Clients({ data }: { data: AppData }) {
         />
       )}
       <SecretDialog secret={secret} onClose={() => setSecret(null)} notify={data.notify} />
+      <OauthHelp
+        open={oauthHelp}
+        endpoint={data.session.gatewayUrl}
+        onClose={() => setOauthHelp(false)}
+        notify={data.notify}
+      />
     </>
   );
 }
@@ -185,7 +200,12 @@ function CreateClient({
               secret = await mutate('/clients', 'POST', {
                 name:
                   name ||
-                  { claude: 'Claude Code', cursor: 'Cursor', custom: 'MCP client' }[type] ||
+                  {
+                    claude: 'Claude Code',
+                    cursor: 'Cursor',
+                    chatgpt: 'ChatGPT',
+                    custom: 'MCP client',
+                  }[type] ||
                   type,
                 type,
                 workspace_id: workspace || null,
@@ -209,6 +229,7 @@ function CreateClient({
             <select value={type} onChange={(e) => setType(e.target.value)}>
               <option value="cursor">Cursor</option>
               <option value="claude">Claude Code</option>
+              <option value="chatgpt">ChatGPT</option>
               <option value="windsurf">Windsurf</option>
               <option value="custom">Custom MCP client</option>
             </select>
@@ -349,7 +370,7 @@ function ClientDetail({
       <ErrorMessage error={action.error} />
       <p className="form-hint">
         Rotating a key immediately invalidates the old one. Revoking a client blocks all future
-        requests.
+        requests. OAuth clients refresh through the connected app.
       </p>
       <div className="modal-footer">
         <Button
@@ -366,23 +387,25 @@ function ClientDetail({
         >
           {confirm === 'revoke' ? 'Confirm revoke' : 'Revoke client'}
         </Button>
-        <Button
-          variant="secondary"
-          disabled={action.busy}
-          onClick={async () => {
-            if (confirm !== 'rotate') {
-              setConfirm('rotate');
-              return;
-            }
-            await action.run(async () => {
-              onSecret(await mutate(`/clients/${c.id}/rotate`, 'POST'));
-              onClose();
-            });
-          }}
-        >
-          <RefreshCw size={15} />
-          {confirm === 'rotate' ? 'Confirm rotation' : 'Rotate key'}
-        </Button>
+        {!c.oauth_client_id && (
+          <Button
+            variant="secondary"
+            disabled={action.busy}
+            onClick={async () => {
+              if (confirm !== 'rotate') {
+                setConfirm('rotate');
+                return;
+              }
+              await action.run(async () => {
+                onSecret(await mutate(`/clients/${c.id}/rotate`, 'POST'));
+                onClose();
+              });
+            }}
+          >
+            <RefreshCw size={15} />
+            {confirm === 'rotate' ? 'Confirm rotation' : 'Rotate key'}
+          </Button>
+        )}
       </div>
     </Modal>
   );
@@ -446,12 +469,50 @@ function SecretDialog({
       <pre className="code-block">{config}</pre>
       <p className="form-hint">
         Use the endpoint and bearer token in your client’s MCP settings. Configuration formats vary
-        by client.
+        by client. ChatGPT and other OAuth-only connectors should use the endpoint with Mack’s OAuth
+        sign-in instead of this key.
       </p>
       <div className="modal-footer">
         <Button onClick={onClose}>
           I’ve saved my key <ArrowRight size={15} />
         </Button>
+      </div>
+    </Modal>
+  );
+}
+function OauthHelp({
+  open,
+  endpoint,
+  onClose,
+  notify,
+}: {
+  open: boolean;
+  endpoint: string;
+  onClose: () => void;
+  notify: (v: string) => void;
+}) {
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Connect ChatGPT with OAuth"
+      description="Add Mack as a connector. ChatGPT will sign in with your Mack account and ask which tools to share."
+    >
+      <label className="field">
+        Mack endpoint
+        <div className="copy-field">
+          <input value={endpoint} readOnly />
+          <button aria-label="Copy endpoint" onClick={() => copy(endpoint, notify)}>
+            <Copy size={16} />
+          </button>
+        </div>
+      </label>
+      <p className="form-hint">
+        In ChatGPT, add a connector or MCP server and paste this URL. Complete Mack’s sign-in and
+        choose connection access. Claude and other OAuth MCP clients use the same endpoint.
+      </p>
+      <div className="modal-footer">
+        <Button onClick={onClose}>Done</Button>
       </div>
     </Modal>
   );

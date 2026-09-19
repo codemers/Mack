@@ -1,6 +1,7 @@
 import { first, run, type Env, type Database } from '../../db/src/index';
 import { hash } from '../../crypto/src/index';
 import { HttpError, type User, type Client } from '../../shared/src/index';
+import { canonicalResource } from '../../oauth-server/src/util';
 export async function sessionUser(request: Request, env: Env): Promise<User> {
   const cookie = request.headers
     .get('cookie')
@@ -27,15 +28,29 @@ export async function sessionUser(request: Request, env: Env): Promise<User> {
   }
   throw new HttpError(401, 'Sign in to continue.');
 }
+function gatewayResource(value: string) {
+  return canonicalResource(value);
+}
+
 export async function authenticateClient(request: Request, env: Env): Promise<Client> {
   const authorization = request.headers.get('authorization');
   if (!authorization?.startsWith('Bearer '))
     throw new HttpError(401, 'A Mack client token is required.');
-  const client = await first<Client>(
+  const digest = await hash(authorization.slice(7));
+  const oauth = await first<Client & { resource: string }>(
     env.DB,
-    'SELECT * FROM clients WHERE credential_hash=? AND revoked_at IS NULL',
-    await hash(authorization.slice(7)),
+    'SELECT c.*, t.resource FROM oauth_access_tokens t JOIN clients c ON c.id=t.mack_client_id WHERE t.token_hash=? AND t.expires_at>? AND c.revoked_at IS NULL',
+    digest,
+    Date.now(),
   );
+  const client =
+    oauth && gatewayResource(oauth.resource) === gatewayResource(env.GATEWAY_URL)
+      ? oauth
+      : await first<Client>(
+          env.DB,
+          'SELECT * FROM clients WHERE credential_hash=? AND revoked_at IS NULL',
+          digest,
+        );
   if (!client) throw new HttpError(401, 'Invalid or revoked client token.');
   if (
     client.workspace_id &&

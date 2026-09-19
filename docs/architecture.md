@@ -2,11 +2,11 @@
 
 ## A single request
 
-The MCP Worker authenticates a hashed client key, checks the origin and request budget, and resolves the owning user and optional workspace. `tools/list` and `tools/call` both use the same permission evaluator. A tool call resolves the public name, validates its JSON arguments against the stored upstream schema, decrypts the connection credential, establishes an upstream SDK session, executes the remote tool name, closes that session, and persists an audit record before returning.
+The MCP Worker authenticates a hashed OAuth access token or client key, checks the origin and request budget, and resolves the owning user and optional workspace. `tools/list` and `tools/call` both use the same permission evaluator. A tool call resolves the public name, validates its JSON arguments against the stored upstream schema, decrypts the connection credential, establishes an upstream SDK session, executes the remote tool name, closes that session, and persists an audit record before returning.
 
 ```mermaid
 flowchart LR
-  AI[AI client] -->|Bearer key| Gateway[MCP Worker]
+  AI[AI client] -->|OAuth or bearer key| Gateway[MCP Worker]
   Web[Next.js dashboard] -->|HttpOnly session| API[API Worker]
   API --> DB[(D1)]
   Gateway --> DB
@@ -33,7 +33,7 @@ A connection-level `none` intentionally cannot be bypassed with a tool-specific 
 
 ## Identity and credentials
 
-- Client keys have 256 bits of randomness. Only their SHA-256 hashes and short display prefixes are stored. New/rotated plaintext keys are returned once.
+- Client keys have 256 bits of randomness. Only their SHA-256 hashes and short display prefixes are stored. New/rotated plaintext keys are returned once. Incoming OAuth access tokens are hashed, expire after one hour, and are bound to the gateway resource URL. Refresh tokens are single-use and rotated.
 - API session tokens are independent from MCP keys. Sessions expire after seven days and use HttpOnly, SameSite=Lax cookies; HTTPS adds Secure.
 - Passwords use PBKDF2-SHA256 with individual salts and 100,000 iterations, compatible with the Workers Web Crypto iteration limit. Passwords require 12–128 characters. This MVP lacks email verification, recovery, MFA, and enterprise identity. Select and integrate an identity provider before a broad public launch.
 - Upstream credentials use AES-256-GCM, with a random nonce and the connection ID as additional authenticated data. Ciphertext has a version prefix. A separate 32-byte base64 infrastructure secret must be identical on both Workers.
@@ -70,4 +70,4 @@ No runtime cache holds authorization decisions. D1 queries currently favor clari
 
 The included SDK-to-gateway integration test initializes a real SDK client, lists two upstreams' tools, executes calls against both, verifies audit entries, and checks token rotation/revocation.
 
-Upstream OAuth uses the shared `packages/oauth` module for SDK-based discovery, PKCE exchange, encrypted state and refresh. `connections.oauth_provider` distinguishes OAuth-backed bearer credentials from manual tokens without changing existing grant semantics. See [OAuth setup](oauth.md) for trust boundaries and provider configuration.
+Incoming OAuth uses `packages/oauth-server` for protected-resource metadata, authorization-server metadata, DCR, CIMD, PKCE, and token issuance. Upstream OAuth uses the shared `packages/oauth` module for SDK-based discovery, PKCE exchange, encrypted state and refresh. `connections.oauth_provider` distinguishes OAuth-backed bearer credentials from manual tokens without changing existing grant semantics. See [OAuth setup](oauth.md) for trust boundaries and provider configuration.

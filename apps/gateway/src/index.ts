@@ -10,11 +10,17 @@ import { authenticateClient, checkOrigin, rateLimit } from '../../../packages/au
 import { availableTools } from '../../../packages/permissions/src/index';
 import { run, type Env } from '../../../packages/db/src/index';
 import { HttpError } from '../../../packages/shared/src/index';
+import {
+  challengeHeaders,
+  handleAuthorizationServer,
+} from '../../../packages/oauth-server/src/index';
 import { executeTool } from './service';
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health') return Response.json({ service: 'mack-gateway', status: 'ok' });
+    const oauth = await handleAuthorizationServer(request, env);
+    if (oauth) return oauth;
     if (url.pathname !== '/mcp') return Response.json({ error: 'Not found' }, { status: 404 });
     try {
       checkOrigin(request, env);
@@ -110,7 +116,11 @@ export default {
             message: e instanceof HttpError ? e.message : 'Gateway request failed.',
           },
         },
-        { status, headers: status === 401 ? { 'WWW-Authenticate': 'Bearer realm="mack"' } : {} },
+        {
+          status,
+          headers:
+            status === 401 ? challengeHeaders(env, request.headers.has('authorization')) : {},
+        },
       );
     }
   },

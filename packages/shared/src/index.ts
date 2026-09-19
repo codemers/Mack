@@ -52,6 +52,7 @@ export interface Client {
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
+  oauth_client_id?: string | null;
 }
 export interface Grant {
   id: string;

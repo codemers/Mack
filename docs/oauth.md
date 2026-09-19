@@ -1,6 +1,34 @@
-# Upstream MCP OAuth
+# MCP OAuth
 
-Mack acts as an OAuth client to remote MCP servers. This does not make Mack an OAuth authorization server for incoming AI clients; those still use Mack client keys.
+Mack is both an OAuth authorization server for incoming AI clients and an OAuth client for upstream MCP servers.
+
+## Incoming AI clients
+
+External MCP clients such as ChatGPT, Claude, and Cursor can connect to the Mack gateway with OAuth 2.1 instead of a pasted bearer key. Add the gateway URL as a connector. Mack advertises protected-resource metadata, supports PKCE S256, dynamic client registration, and Client ID Metadata Documents.
+
+| Piece                         | Location                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| MCP resource                  | `GATEWAY_URL`, for example `https://mack-gateway-staging.blogue.workers.dev/mcp`                       |
+| Protected resource metadata   | `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp` on the gateway |
+| Authorization server metadata | `/.well-known/oauth-authorization-server` on the gateway                                               |
+| Sign-in and consent           | `{WEB_ORIGIN}/oauth/authorize` after the gateway validates the OAuth request                           |
+| Tokens                        | Gateway `/oauth/token`, hashed access tokens with a one-hour lifetime and rotated refresh tokens       |
+
+Unauthenticated `/mcp` requests return `401` with a `WWW-Authenticate` challenge that includes `resource_metadata` and `scope="mcp"`. The user signs in with their Mack session, chooses workspace context, and grants per-connection access. Those grants use the same client permission model as bearer keys. OAuth access tokens are bound to the gateway resource URL. Reconnect from the AI client to refresh access; rotating a key in the dashboard is disabled for OAuth clients.
+
+Apply migration `0004_incoming_oauth.sql` before deploying both Workers:
+
+```sh
+npm run db:migrate
+npm run deploy:api
+npm run deploy:gateway
+```
+
+Bearer keys still work for clients that do not speak OAuth.
+
+## Upstream MCP servers
+
+Mack also acts as an OAuth client to remote MCP servers.
 
 | Provider                   | Connection                           | Operator setup                                                                                                                                                                                       |
 | -------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
