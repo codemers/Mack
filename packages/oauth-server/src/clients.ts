@@ -22,6 +22,22 @@ export function parseRedirectUris(value: string) {
   return JSON.parse(value) as string[];
 }
 
+function matchesVariableLoopbackPort(registeredUri: string, requestedUri: string) {
+  const registered = new URL(registeredUri);
+  const requested = new URL(requestedUri);
+  const hostname = registered.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (
+    registered.protocol !== 'http:' ||
+    registered.port ||
+    (hostname !== '127.0.0.1' && hostname !== '::1') ||
+    requested.hostname !== registered.hostname ||
+    !requested.port
+  )
+    return false;
+  requested.port = '';
+  return requested.href === registered.href;
+}
+
 function asStringList(value: unknown) {
   if (typeof value === 'string' && value.trim()) return [value];
   if (Array.isArray(value)) return value;
@@ -55,7 +71,12 @@ function supportedResponseTypes(value: unknown) {
 }
 
 export function registeredRedirect(client: OAuthClientRow, redirectUri: string) {
-  if (!parseRedirectUris(client.redirect_uris).includes(redirectUri))
+  if (
+    !parseRedirectUris(client.redirect_uris).some(
+      (registeredUri) =>
+        registeredUri === redirectUri || matchesVariableLoopbackPort(registeredUri, redirectUri),
+    )
+  )
     throw new OAuthError('invalid_request', 'Redirect URI is not registered for this client.');
   return redirectUri;
 }

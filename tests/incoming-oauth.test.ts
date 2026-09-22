@@ -401,6 +401,32 @@ test('CIMD clients are fetched over HTTPS and private metadata hosts are rejecte
   assert.equal(privateHost.status, 400);
 });
 
+test('CIMD clients accept variable loopback ports while matching the registered path', async () => {
+  const metadata = {
+    client_id: 'https://chatgpt.com/oauth/codex/client.json',
+    client_name: 'Codex',
+    redirect_uris: ['http://127.0.0.1/callback'],
+    token_endpoint_auth_method: 'none',
+  };
+  globalThis.fetch = async (input, init) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url === metadata.client_id) return Response.json(metadata);
+    const request = new Request(input, init);
+    if (new URL(request.url).origin === 'http://127.0.0.1:8790') return fixtureFetch(request);
+    throw new Error('Unexpected network request: ' + url);
+  };
+  const { challenge } = pkce();
+  const accepted = await beginAuthorize(metadata.client_id, challenge, {
+    redirect_uri: 'http://127.0.0.1:49152/callback',
+  });
+  assert.equal(accepted.status, 302);
+
+  const rejected = await beginAuthorize(metadata.client_id, challenge, {
+    redirect_uri: 'http://127.0.0.1:49152/different',
+  });
+  assert.equal(rejected.status, 400);
+});
+
 test('OAuth client keys cannot be rotated and revoke stops gateway access', async () => {
   const { verifier, challenge } = pkce();
   const { client_id } = await registerClient();
