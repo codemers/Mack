@@ -2,7 +2,7 @@ import { assess, definitionHash } from '../../classification/src/index';
 import type { Tool as RemoteTool } from '@modelcontextprotocol/sdk/types.js';
 import { all, run, type Env } from '../../db/src/index';
 import { withRemote, type Credentials } from '../../mcp/src/index';
-import { id, type Connection, type Risk, type Tool } from '../../shared/src/index';
+import { id, type AccessMode, type Connection, type Risk, type Tool } from '../../shared/src/index';
 export function classify(name: string, annotations?: RemoteTool['annotations']): Risk {
   if (
     /(delete|remove|destroy|transfer|publish|admin|revoke|execute|shell|eval|sql|run_code)/i.test(
@@ -140,4 +140,40 @@ export async function saveDiscovery(
       digest,
     );
   }
+}
+
+export async function applyConnectionAccessMode(
+  env: Env,
+  connectionId: string,
+  reviewerId: string,
+  mode: AccessMode,
+) {
+  const tools = await all<Tool>(env.DB, 'SELECT * FROM tools WHERE connection_id=?', connectionId);
+  const note = `Enabled by connection access policy: ${mode.replace('_', ' + ')}`;
+  const statements = [
+    env.DB.prepare('UPDATE connections SET access_mode=? WHERE id=?').bind(mode, connectionId),
+  ];
+  for (const tool of tools) {
+    const allowed =
+      tool.risk_floor !== 'admin' &&
+      tool.risk_level !== 'admin' &&
+      Boolean(tool.definition_hash) &&
+      (mode === 'read_write' || tool.risk_level === mode);
+    if (!allowed) {
+      statements.push(env.DB.prepare('UPDATE tools SET enabled=0 WHERE id=?').bind(tool.id));
+      continue;
+    }
+    if (tool.review_state !== 'reviewed')
+      statements.push(
+        env.DB.prepare(
+          'INSERT INTO tool_reviews(id,tool_id,definition_hash,reviewer_id,risk_level,note) VALUES(?,?,?,?,?,?)',
+        ).bind(id('review'), tool.id, tool.definition_hash, reviewerId, tool.risk_level, note),
+      );
+    statements.push(
+      env.DB.prepare(
+        "UPDATE tools SET review_state='reviewed',enabled=1,reviewed_by=?,reviewed_at=datetime('now'),review_note=? WHERE id=?",
+      ).bind(reviewerId, note, tool.id),
+    );
+  }
+  await env.DB.batch(statements);
 }

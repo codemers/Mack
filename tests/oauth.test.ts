@@ -116,12 +116,13 @@ const request = (
     }),
     env,
   );
-async function start() {
+async function start(accessMode: 'read' | 'write' | 'read_write' = 'read') {
   const response = await request('/oauth/start', 'POST', {
     name: 'Linear OAuth',
     provider: 'linear',
     server_url: 'https://mcp.linear.app/mcp',
     scope: 'personal',
+    access_mode: accessMode,
   });
   assert.equal(response.status, 200);
   const result = (await response.json()) as { url: string };
@@ -130,7 +131,7 @@ async function start() {
 async function finish(url: URL) {
   return request('/oauth/callback?state=' + url.searchParams.get('state') + '&code=test-code');
 }
-test('OAuth PKCE callback stores encrypted tokens, discovers blocked tools and consumes state once', async () => {
+test('OAuth PKCE callback stores encrypted tokens, enables read tools and consumes state once', async () => {
   const url = await start();
   assert.equal(url.searchParams.get('scope'), 'read');
   assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
@@ -142,17 +143,25 @@ test('OAuth PKCE callback stores encrypted tokens, discovers blocked tools and c
   assert.ok(!pending.encrypted_payload.includes('test-client'));
   const response = await finish(url);
   assert.equal(response.status, 303);
-  assert.equal(response.headers.get('location'), 'https://mack.test/?oauth=connected#connections');
+  const redirect = new URL(response.headers.get('location')!);
+  assert.equal(redirect.origin + redirect.pathname, 'https://mack.test/');
+  assert.equal(redirect.searchParams.get('oauth'), 'connected');
   assert.equal(
     (await hash(verifier)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''),
     url.searchParams.get('code_challenge'),
   );
   const connection = (await all<Connection>(db, 'SELECT * FROM connections'))[0];
   assert.equal(connection.oauth_provider, 'mcp.linear.app');
+  assert.equal(redirect.searchParams.get('connection'), connection.id);
+  assert.equal(connection.access_mode, 'read');
   const tools = await all<Tool>(db, 'SELECT * FROM tools');
   assert.ok(tools.length > 0);
-  assert.ok(tools.every((t) => t.enabled === 0 && t.review_state === 'pending'));
-  assert.equal(await canUse(db, 'user_demo', connection, tools[0]), false);
+  const readTool = tools.find((t) => t.risk_level === 'read')!;
+  const writeTool = tools.find((t) => t.risk_level === 'write')!;
+  assert.equal(readTool.enabled, 1);
+  assert.equal(readTool.review_state, 'reviewed');
+  assert.equal(writeTool.enabled, 0);
+  assert.equal(await canUse(db, 'user_demo', connection, readTool), true);
   const row = (await first<{ encrypted_credentials: string }>(
     db,
     'SELECT encrypted_credentials FROM connection_credentials',

@@ -1,5 +1,6 @@
 import { refreshCredentials, type OAuthState } from '../../oauth/src/index';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { first, type Env } from '../../db/src/index';
 import { decrypt } from '../../crypto/src/index';
@@ -80,11 +81,19 @@ export async function withRemote<T>(
       headers[credentials.header || 'X-API-Key'] = credentials.token;
   }
   const client = new Client({ name: 'mack', version: '0.1.0' });
+  const legacySse = /\/sse\/?$/.test(url.pathname);
   const safeFetch: typeof fetch = async (input, init) => {
     const target = new URL(
       typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
     );
-    if (target.origin !== url.origin || target.pathname !== url.pathname)
+    if (
+      target.origin !== url.origin ||
+      target.username ||
+      target.password ||
+      target.hash ||
+      (!legacySse && target.pathname !== url.pathname) ||
+      (legacySse && (init?.method || 'GET').toUpperCase() === 'GET' && target.href !== url.href)
+    )
       throw new HttpError(502, 'Remote server attempted to change its endpoint.');
     const response = await fetch(input, {
       ...init,
@@ -117,15 +126,18 @@ export async function withRemote<T>(
       headers: response.headers,
     });
   };
-  const transport = new StreamableHTTPClientTransport(url, {
-    requestInit: { headers },
-    fetch: safeFetch,
-  });
+  const transport = legacySse
+    ? new SSEClientTransport(url, { requestInit: { headers }, fetch: safeFetch })
+    : new StreamableHTTPClientTransport(url, {
+        requestInit: { headers },
+        fetch: safeFetch,
+      });
   try {
     await client.connect(transport);
     return await action(client);
   } finally {
-    await transport.terminateSession().catch(() => undefined);
+    if (transport instanceof StreamableHTTPClientTransport)
+      await transport.terminateSession().catch(() => undefined);
     await client.close().catch(() => undefined);
   }
 }

@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import type { AppData, Connection } from '@/lib/types';
+import type { AccessMode, AppData, Connection } from '@/lib/types';
 import { api, copy, mutate } from '@/lib/api';
 import {
   Badge,
@@ -68,6 +68,15 @@ export function Connections({ data, onClients }: { data: AppData; onClients: () 
       `${c.name} ${c.provider}`.toLowerCase().includes(search.toLowerCase()),
   );
   const selectedConnection = data.connections.find((c) => c.id === selected);
+  useEffect(() => {
+    const connectionId = new URLSearchParams(location.search).get('connection');
+    if (!connectionId || !data.connections.some((connection) => connection.id === connectionId))
+      return;
+    setSelected(connectionId);
+    const clean = new URL(location.href);
+    clean.searchParams.delete('connection');
+    history.replaceState(null, '', clean);
+  }, [data.connections]);
   const connected = available.filter((c) => c.status === 'connected').length;
   const tools = available.flatMap((c) =>
     c.status === 'connected' ? c.tools.filter((t) => t.enabled) : [],
@@ -276,7 +285,15 @@ export function Connections({ data, onClients }: { data: AppData; onClients: () 
           Copy endpoint
         </Button>
       </div>
-      <AddConnection open={adding} onClose={() => setAdding(false)} data={data} />
+      <AddConnection
+        open={adding}
+        onClose={() => setAdding(false)}
+        onConnected={(id) => {
+          setAdding(false);
+          setSelected(id);
+        }}
+        data={data}
+      />
       {selectedConnection && (
         <ConnectionDetail
           connection={selectedConnection}
@@ -296,10 +313,12 @@ function SearchIcon() {
 export function AddConnection({
   open,
   onClose,
+  onConnected,
   data,
 }: {
   open: boolean;
   onClose: () => void;
+  onConnected: (id: string) => void;
   data: AppData;
 }) {
   const [provider, setProvider] = useState<string | null>(null);
@@ -307,6 +326,7 @@ export function AddConnection({
   const [url, setUrl] = useState('');
   const [scope, setScope] = useState('personal');
   const [auth, setAuth] = useState('oauth');
+  const [accessMode, setAccessMode] = useState<AccessMode>('read');
   const [scopeOptions, setScopeOptions] = useState<{
     url: string;
     scopes: {
@@ -370,6 +390,7 @@ export function AddConnection({
   const close = () => {
     setProvider(null);
     setCredential('');
+    setAccessMode('read');
     action.setError('');
     onClose();
   };
@@ -394,6 +415,7 @@ export function AddConnection({
                 setName(p.name);
                 setUrl(p.url);
                 setAuth('oauth');
+                setAccessMode('read');
                 setScopeOptions(null);
               }}
             >
@@ -423,6 +445,7 @@ export function AddConnection({
                   server_url: url,
                   scope,
                   workspace_id: scope === 'workspace' ? data.workspace : undefined,
+                  access_mode: accessMode,
                   oauth_scope: currentScopes?.length
                     ? currentScopes
                         .filter((option) => option.selected)
@@ -434,23 +457,26 @@ export function AddConnection({
               });
               return;
             }
+            let connectionId = '';
             if (
-              await action.run(
-                () =>
-                  mutate('/connections', 'POST', {
-                    name,
-                    provider,
-                    scope,
-                    workspace_id: scope === 'workspace' ? data.workspace : undefined,
-                    server_url: url,
-                    auth_type: auth,
-                    token: credential || undefined,
-                    header: auth === 'api_key' ? header : undefined,
-                  }),
-                'Connection added and tools discovered',
-              )
-            )
+              await action.run(async () => {
+                const result = await mutate<{ id: string }>('/connections', 'POST', {
+                  name,
+                  provider,
+                  scope,
+                  workspace_id: scope === 'workspace' ? data.workspace : undefined,
+                  server_url: url,
+                  auth_type: auth,
+                  access_mode: accessMode,
+                  token: credential || undefined,
+                  header: auth === 'api_key' ? header : undefined,
+                });
+                connectionId = result.id;
+              }, 'Connection added and tools discovered')
+            ) {
               close();
+              onConnected(connectionId);
+            }
           }}
         >
           <div className="scope-picker">
@@ -500,6 +526,20 @@ export function AddConnection({
               type="url"
               placeholder="https://example.com/mcp"
             />
+          </label>
+          <label className="field">
+            Default tool access
+            <select
+              value={accessMode}
+              onChange={(event) => setAccessMode(event.target.value as AccessMode)}
+            >
+              <option value="read">Read</option>
+              <option value="write">Write</option>
+              <option value="read_write">Read + write</option>
+            </select>
+            <small>
+              Matching tools are enabled after discovery. Admin tools still require review.
+            </small>
           </label>
           <label className="field">
             Authentication
@@ -676,121 +716,165 @@ function ConnectionDetail({
         )}
       </div>
       <div className="detail-tool-heading">
-        <h3>
-          Available tools <span>{c.tools.length}</span>
-        </h3>
-        <SearchInput value={search} onChange={setSearch} placeholder="Find a tool…" />
+        <div>
+          <h3>
+            Available tools <span>{c.tools.length}</span>
+          </h3>
+          <p>Admin tools remain off until they are reviewed individually.</p>
+        </div>
+        <div className="detail-tool-controls">
+          <label className="access-mode-select">
+            <span>Tool access</span>
+            <select
+              value={c.access_mode}
+              disabled={!c.canManage || action.busy}
+              onChange={(event) =>
+                action.run(
+                  () =>
+                    mutate(`/connections/${c.id}`, 'PATCH', {
+                      access_mode: event.target.value,
+                    }),
+                  'Tool access updated',
+                )
+              }
+            >
+              <option value="read">Read</option>
+              <option value="write">Write</option>
+              <option value="read_write">Read + write</option>
+            </select>
+          </label>
+          <SearchInput value={search} onChange={setSearch} placeholder="Find a tool…" />
+        </div>
       </div>
       <p className="form-hint">
-        New and changed tools require review. Jev suggestions never grant access; existing user and
-        client permissions still apply.
+        The access policy enables matching discovered tools. Existing user and client permissions
+        still apply.
       </p>
-      <div className="tool-list">
-        {c.tools
-          .filter((t) =>
-            `${t.remote_name} ${t.description}`.toLowerCase().includes(search.toLowerCase()),
-          )
-          .map((t) => (
-            <div className="tool-row" key={t.id}>
-              <div>
-                <div className="flex-line">
-                  <code>{t.remote_name}</code>
-                  <Badge
-                    color={
-                      t.risk_level === 'read' ? 'blue' : t.risk_level === 'write' ? 'amber' : 'red'
-                    }
-                  >
-                    {t.risk_level}
-                  </Badge>
-                </div>
-                <p>{t.description}</p>
-                <small className="public-name">{t.public_name}</small>
-                <p>
-                  {t.review_state === 'reviewed' ? 'Reviewed' : 'Review required'} · Jev:{' '}
-                  {t.classification_status}
-                  {t.suggested_risk ? ` — ${t.suggested_risk}` : ''}
-                  {t.classification_probability != null
-                    ? ` (${Math.round(t.classification_probability * 100)}% model probability)`
-                    : ''}
-                </p>
-                {t.review_note && (
-                  <p>
-                    Review: {t.review_note}
-                    {t.reviewed_at ? ` · ${t.reviewed_at}` : ''}
-                  </p>
-                )}
-                {c.canManage && (
-                  <details className="tool-review">
-                    <summary>Review permissions</summary>
-                    {!t.definition_hash && <p>Refresh tools to review the current definition.</p>}
-                    <p>
-                      Confirm the server’s actual behavior. Metadata and model probabilities are not
-                      security guarantees.
-                    </p>
-                    <pre style={{ maxHeight: 180, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-                      {JSON.stringify(JSON.parse(t.input_schema), null, 2)}
-                    </pre>
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        const form = new FormData(e.currentTarget);
-                        action.run(
-                          () =>
-                            mutate(`/tools/${t.id}/review`, 'POST', {
-                              definition_hash: t.definition_hash,
-                              risk_level: form.get('risk'),
-                              note: form.get('note'),
-                              enabled: form.get('enable') === 'on',
-                            }),
-                          'Tool reviewed',
-                        );
-                      }}
-                    >
-                      <label>
-                        Approved access level{' '}
-                        <select
-                          name="risk"
-                          defaultValue={t.risk_floor === 'admin' ? 'admin' : 'write'}
+      <div className="tool-table-wrap">
+        <table className="tool-table">
+          <colgroup>
+            <col className="tool-name-column" />
+            <col className="tool-access-column" />
+            <col className="tool-review-column" />
+            <col className="tool-enabled-column" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Tool</th>
+              <th>Access</th>
+              <th>Review</th>
+              <th>Enabled</th>
+            </tr>
+          </thead>
+          <tbody>
+            {c.tools
+              .filter((t) =>
+                `${t.remote_name} ${t.description}`.toLowerCase().includes(search.toLowerCase()),
+              )
+              .map((t) => (
+                <tr key={t.id}>
+                  <td className="tool-name-cell">
+                    <code>{t.remote_name}</code>
+                    <span>{t.description || 'No description provided.'}</span>
+                    <small>{t.public_name}</small>
+                    {c.canManage && (
+                      <details className="tool-review tool-review-compact">
+                        <summary>Review details</summary>
+                        {!t.definition_hash && <p>Refresh tools to review the definition.</p>}
+                        <p>Confirm the server’s actual behavior before granting elevated access.</p>
+                        <pre>{JSON.stringify(JSON.parse(t.input_schema), null, 2)}</pre>
+                        <form
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            const form = new FormData(event.currentTarget);
+                            action.run(
+                              () =>
+                                mutate(`/tools/${t.id}/review`, 'POST', {
+                                  definition_hash: t.definition_hash,
+                                  risk_level: form.get('risk'),
+                                  note: form.get('note'),
+                                  enabled: form.get('enable') === 'on',
+                                }),
+                              'Tool reviewed',
+                            );
+                          }}
                         >
-                          <option value="read" disabled={t.risk_floor === 'admin'}>
-                            Read
-                          </option>
-                          <option value="write" disabled={t.risk_floor === 'admin'}>
-                            Write
-                          </option>
-                          <option value="admin">Admin</option>
-                        </select>
-                      </label>
-                      <label>
-                        Review rationale{' '}
-                        <input
-                          name="note"
-                          required
-                          minLength={10}
-                          maxLength={2000}
-                          placeholder="How did you verify the tool’s behavior?"
-                        />
-                      </label>
-                      <label>
-                        <input type="checkbox" name="enable" /> Enable after review
-                      </label>
-                      <Button type="submit" disabled={action.busy || !t.definition_hash}>
-                        Approve permissions
-                      </Button>
-                    </form>
-                  </details>
-                )}
-              </div>
-              <Toggle
-                label={`Enable ${t.remote_name}`}
-                checked={Boolean(t.enabled)}
-                disabled={!c.canManage || action.busy || t.review_state !== 'reviewed'}
-                onChange={() =>
-                  action.run(() => mutate(`/tools/${t.id}`, 'PATCH', { enabled: !t.enabled }))
-                }
-              />
-            </div>
-          ))}
+                          <label>
+                            Approved access
+                            <select name="risk" defaultValue={t.risk_level}>
+                              <option value="read" disabled={t.risk_floor === 'admin'}>
+                                Read
+                              </option>
+                              <option value="write" disabled={t.risk_floor === 'admin'}>
+                                Write
+                              </option>
+                              <option value="admin">Admin</option>
+                            </select>
+                          </label>
+                          <label>
+                            Review rationale
+                            <input
+                              name="note"
+                              required
+                              minLength={10}
+                              maxLength={2000}
+                              placeholder="How did you verify this tool?"
+                            />
+                          </label>
+                          <label>
+                            <input
+                              type="checkbox"
+                              name="enable"
+                              defaultChecked={Boolean(t.enabled)}
+                            />
+                            Enable after review
+                          </label>
+                          <Button
+                            type="submit"
+                            size="sm"
+                            disabled={action.busy || !t.definition_hash}
+                          >
+                            Approve
+                          </Button>
+                        </form>
+                      </details>
+                    )}
+                  </td>
+                  <td>
+                    <Badge
+                      color={
+                        t.risk_level === 'read'
+                          ? 'blue'
+                          : t.risk_level === 'write'
+                            ? 'amber'
+                            : 'red'
+                      }
+                    >
+                      {t.risk_level}
+                    </Badge>
+                  </td>
+                  <td className="tool-review-status">
+                    <span
+                      className={t.review_state === 'reviewed' ? 'is-reviewed' : 'needs-review'}
+                    >
+                      {t.review_state === 'reviewed' ? 'Reviewed' : 'Required'}
+                    </span>
+                    <small>Jev: {t.classification_status}</small>
+                  </td>
+                  <td>
+                    <Toggle
+                      label={`Enable ${t.remote_name}`}
+                      checked={Boolean(t.enabled)}
+                      disabled={!c.canManage || action.busy || t.review_state !== 'reviewed'}
+                      onChange={() =>
+                        action.run(() => mutate(`/tools/${t.id}`, 'PATCH', { enabled: !t.enabled }))
+                      }
+                    />
+                  </td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
         {!c.tools.length && <p className="form-hint">No tools were advertised by this server.</p>}
       </div>
       {c.canManage && c.oauth_provider && (
@@ -806,6 +890,7 @@ function ConnectionDetail({
                 server_url: c.server_url,
                 scope: c.scope,
                 workspace_id: c.workspace_id || undefined,
+                access_mode: c.access_mode,
               });
               window.location.assign(result.url);
             })

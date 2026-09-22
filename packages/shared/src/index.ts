@@ -1,4 +1,5 @@
 export type Risk = 'read' | 'write' | 'admin';
+export type AccessMode = 'read' | 'write' | 'read_write';
 export type Permission = 'none' | Risk;
 export type Role = 'owner' | 'admin' | 'member';
 export interface User {
@@ -17,6 +18,7 @@ export interface Connection {
   namespace: string;
   server_url: string;
   auth_type: 'none' | 'bearer' | 'api_key';
+  access_mode: AccessMode;
   status: 'connected' | 'error' | 'paused';
   is_demo: number;
   capabilities: string;

@@ -244,7 +244,7 @@ test('API rejects cross-origin writes before modifying data', async () => {
     'Alex Morgan',
   );
 });
-test('connection addition discovers real MCP tools and preserves disablement on refresh', async () => {
+test('connection access defaults to read and bulk-enables the selected tool types', async () => {
   const response = await request('/connections', 'POST', {
     name: 'Another GitHub',
     provider: 'github',
@@ -257,21 +257,113 @@ test('connection addition discovers real MCP tools and preserves disablement on 
   const c = await conn(id);
   const tools = await all<Tool>(db, 'SELECT * FROM tools WHERE connection_id=?', id);
   assert.equal(tools.length, 6);
-  assert.ok(tools.every((t) => t.enabled === 0 && t.review_state === 'pending'));
-  await run(
-    db,
-    'UPDATE tools SET enabled=0 WHERE id=?',
-    tools.find((t) => t.risk_level === 'read')!.id,
+  assert.equal(c.access_mode, 'read');
+  assert.ok(
+    tools
+      .filter((t) => t.risk_level === 'read')
+      .every((t) => t.enabled === 1 && t.review_state === 'reviewed'),
   );
-  await saveDiscovery(env, c, await discover(env, c));
+  assert.ok(tools.filter((t) => t.risk_level !== 'read').every((t) => t.enabled === 0));
+
   assert.equal(
-    (await first<Tool>(
-      db,
-      'SELECT * FROM tools WHERE id=?',
-      tools.find((t) => t.risk_level === 'read')!.id,
-    ))!.enabled,
-    0,
+    (await request(`/connections/${id}`, 'PATCH', { access_mode: 'read_write' })).status,
+    200,
   );
+  const readWriteTools = await all<Tool>(db, 'SELECT * FROM tools WHERE connection_id=?', id);
+  assert.ok(
+    readWriteTools
+      .filter((t) => t.risk_level !== 'admin')
+      .every((t) => t.enabled === 1 && t.review_state === 'reviewed'),
+  );
+  assert.ok(readWriteTools.filter((t) => t.risk_level === 'admin').every((t) => !t.enabled));
+
+  assert.equal(
+    (await request(`/connections/${id}`, 'PATCH', { access_mode: 'write' })).status,
+    200,
+  );
+  const writeTools = await all<Tool>(db, 'SELECT * FROM tools WHERE connection_id=?', id);
+  assert.ok(writeTools.filter((t) => t.risk_level === 'write').every((t) => t.enabled === 1));
+  assert.ok(writeTools.filter((t) => t.risk_level !== 'write').every((t) => t.enabled === 0));
+});
+test('legacy SSE connections discover tools and forward bearer credentials', async () => {
+  const previousFetch = globalThis.fetch;
+  const encoder = new TextEncoder();
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const authenticated = new Set<string>();
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    assert.equal(request.headers.get('authorization'), 'Bearer legacy-token');
+    if (url.pathname === '/sse' && request.method === 'GET') {
+      authenticated.add('sse');
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            stream = controller;
+            controller.enqueue(
+              encoder.encode('event: endpoint\ndata: /messages?sessionId=test\n\n'),
+            );
+          },
+        }),
+        { headers: { 'content-type': 'text/event-stream' } },
+      );
+    }
+    if (url.pathname === '/messages' && request.method === 'POST') {
+      authenticated.add('messages');
+      const message = (await request.json()) as { id?: string | number; method: string };
+      if (message.id !== undefined) {
+        const result =
+          message.method === 'initialize'
+            ? {
+                protocolVersion: '2025-03-26',
+                capabilities: { tools: {} },
+                serverInfo: { name: 'legacy-sse-fixture', version: '1.0.0' },
+              }
+            : {
+                tools: [
+                  {
+                    name: 'search_records',
+                    description: 'Search database records.',
+                    inputSchema: { type: 'object', properties: {} },
+                  },
+                ],
+              };
+        stream?.enqueue(
+          encoder.encode(
+            `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: message.id, result })}\n\n`,
+          ),
+        );
+      }
+      return new Response(null, { status: 202 });
+    }
+    throw new Error(`Unexpected legacy SSE request: ${request.method} ${request.url}`);
+  };
+  const connection: Connection = {
+    id: 'legacy_sse',
+    scope: 'personal',
+    user_id: 'user_demo',
+    workspace_id: null,
+    name: 'Legacy SSE',
+    provider: 'custom',
+    namespace: 'legacy_sse',
+    server_url: 'http://127.0.0.1:8790/sse',
+    auth_type: 'bearer',
+    access_mode: 'read',
+    status: 'connected',
+    is_demo: 0,
+    capabilities: '{}',
+    created_at: new Date().toISOString(),
+  };
+  try {
+    const discovery = await discover(env, connection, { token: 'legacy-token' });
+    assert.deepEqual(
+      discovery.tools.map((tool) => tool.name),
+      ['search_records'],
+    );
+    assert.deepEqual([...authenticated].sort(), ['messages', 'sse']);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 test('gateway supports SDK initialize, tools/list, and tools/call across two upstream servers', async () => {
   const issued = await issueClient();

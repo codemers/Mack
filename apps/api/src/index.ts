@@ -32,7 +32,12 @@ import {
   role,
   availableTools,
 } from '../../../packages/permissions/src/index';
-import { discover, saveDiscovery, namespace } from '../../../packages/tool-registry/src/index';
+import {
+  applyConnectionAccessMode,
+  discover,
+  saveDiscovery,
+  namespace,
+} from '../../../packages/tool-registry/src/index';
 import { validateServerUrl } from '../../../packages/mcp/src/index';
 import {
   HttpError,
@@ -191,6 +196,7 @@ app.post('/api/oauth/start', async (c) => {
       scope: z.enum(['personal', 'workspace']),
       workspace_id: z.string().optional(),
       oauth_scope: z.string().max(2000).optional(),
+      access_mode: z.enum(['read', 'write', 'read_write']).default('read'),
       connection_id: z.string().optional(),
     })
     .parse(await c.req.json());
@@ -235,8 +241,13 @@ app.get('/api/oauth/callback', async (c) => {
     Date.now(),
   );
   if (!pending) throw new HttpError(400, 'OAuth request expired or was already used. Start again.');
-  const finish = (result: string) =>
-    c.redirect(`${c.env.WEB_ORIGIN}/?oauth=${result}#connections`, 303);
+  const finish = (result: string, connectionId?: string) => {
+    const target = new URL('/', c.env.WEB_ORIGIN);
+    target.searchParams.set('oauth', result);
+    if (connectionId) target.searchParams.set('connection', connectionId);
+    target.hash = 'connections';
+    return c.redirect(target.href, 303);
+  };
   if (c.req.query('error')) return finish('cancelled');
   const code = c.req.query('code');
   if (!code || code.length > 8192) return finish('failed');
@@ -247,6 +258,7 @@ app.get('/api/oauth/callback', async (c) => {
       server_url: string;
       scope: 'personal' | 'workspace';
       workspace_id?: string;
+      access_mode: 'read' | 'write' | 'read_write';
       connection_id?: string;
     };
     oauth: OAuthState;
@@ -280,6 +292,7 @@ app.get('/api/oauth/callback', async (c) => {
     user_id: data.scope === 'personal' ? c.get('user').id : null,
     workspace_id: data.scope === 'workspace' ? data.workspace_id! : null,
     auth_type: 'bearer',
+    access_mode: data.access_mode,
     oauth_provider: new URL(data.server_url).hostname,
     namespace: namespace(data.name, connectionId),
     status: 'error',
@@ -291,8 +304,8 @@ app.get('/api/oauth/callback', async (c) => {
   if (data.connection_id) {
     statements.push(
       c.env.DB.prepare(
-        "UPDATE connections SET auth_type='bearer',oauth_provider=?,status='error' WHERE id=?",
-      ).bind(connection.oauth_provider, connectionId),
+        "UPDATE connections SET auth_type='bearer',oauth_provider=?,access_mode=?,status='error' WHERE id=?",
+      ).bind(connection.oauth_provider, connection.access_mode, connectionId),
     );
     statements.push(
       c.env.DB.prepare(
@@ -302,7 +315,7 @@ app.get('/api/oauth/callback', async (c) => {
   } else
     statements.push(
       c.env.DB.prepare(
-        'INSERT INTO connections(id,scope,user_id,workspace_id,name,provider,namespace,server_url,auth_type,status,oauth_provider) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO connections(id,scope,user_id,workspace_id,name,provider,namespace,server_url,auth_type,access_mode,status,oauth_provider) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
       ).bind(
         connection.id,
         connection.scope,
@@ -313,6 +326,7 @@ app.get('/api/oauth/callback', async (c) => {
         connection.namespace,
         connection.server_url,
         connection.auth_type,
+        connection.access_mode,
         connection.status,
         connection.oauth_provider,
       ),
@@ -330,10 +344,11 @@ app.get('/api/oauth/callback', async (c) => {
   ))!;
   try {
     await saveDiscovery(c.env, saved, await discover(c.env, saved));
+    await applyConnectionAccessMode(c.env, saved.id, c.get('user').id, saved.access_mode);
   } catch {
-    return finish('discovery_failed');
+    return finish('discovery_failed', connectionId);
   }
-  return finish('connected');
+  return finish('connected', connectionId);
 });
 app.get('/api/oauth/incoming/:id', async (c) =>
   c.json(await incomingAuthorizationDetails(c.env, c.req.param('id'), c.get('user').id)),
@@ -400,6 +415,7 @@ app.post('/api/connections', async (c) => {
       workspace_id: z.string().optional(),
       server_url: z.string().max(2048),
       auth_type: z.enum(['none', 'bearer', 'api_key']),
+      access_mode: z.enum(['read', 'write', 'read_write']).default('read'),
       token: z.string().max(8192).optional(),
       header: z
         .string()
@@ -426,6 +442,7 @@ app.post('/api/connections', async (c) => {
     workspace_id: data.scope === 'workspace' ? data.workspace_id! : null,
     server_url: data.server_url,
     auth_type: data.auth_type,
+    access_mode: data.access_mode,
     status: 'connected',
     is_demo: 0,
     capabilities: '{}',
@@ -447,7 +464,7 @@ app.post('/api/connections', async (c) => {
   }
   const statements = [
     c.env.DB.prepare(
-      'INSERT INTO connections(id,scope,user_id,workspace_id,name,provider,namespace,server_url,auth_type,status) VALUES(?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO connections(id,scope,user_id,workspace_id,name,provider,namespace,server_url,auth_type,access_mode,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
     ).bind(
       connection.id,
       connection.scope,
@@ -458,6 +475,7 @@ app.post('/api/connections', async (c) => {
       connection.namespace,
       connection.server_url,
       connection.auth_type,
+      connection.access_mode,
       connection.status,
     ),
   ];
@@ -470,6 +488,7 @@ app.post('/api/connections', async (c) => {
   await c.env.DB.batch(statements);
   try {
     await saveDiscovery(c.env, connection, discovery);
+    await applyConnectionAccessMode(c.env, connection.id, c.get('user').id, connection.access_mode);
   } catch (e) {
     await run(c.env.DB, 'DELETE FROM connections WHERE id=?', connection.id);
     throw e;
@@ -490,6 +509,7 @@ app.post('/api/connections/:id/sync', async (c) => {
   const connection = await managedConnection(c.env, c.req.param('id'), c.get('user').id);
   try {
     await saveDiscovery(c.env, connection, await discover(c.env, connection));
+    await applyConnectionAccessMode(c.env, connection.id, c.get('user').id, connection.access_mode);
   } catch {
     await run(c.env.DB, "UPDATE connections SET status='error' WHERE id=?", connection.id);
     throw new HttpError(502, 'Discovery failed. Check the server and update its credentials.');
@@ -502,6 +522,7 @@ app.patch('/api/connections/:id', async (c) => {
     .object({
       status: z.enum(['connected', 'paused']).optional(),
       name: nameSchema.optional(),
+      access_mode: z.enum(['read', 'write', 'read_write']).optional(),
       token: z.string().min(1).max(8192).optional(),
       header: z
         .string()
@@ -530,6 +551,8 @@ app.patch('/api/connections/:id', async (c) => {
     await run(c.env.DB, 'UPDATE connections SET status=? WHERE id=?', data.status, connection.id);
   if (data.name)
     await run(c.env.DB, 'UPDATE connections SET name=? WHERE id=?', data.name, connection.id);
+  if (data.access_mode)
+    await applyConnectionAccessMode(c.env, connection.id, c.get('user').id, data.access_mode);
   return c.json({ ok: true });
 });
 app.delete('/api/connections/:id', async (c) => {

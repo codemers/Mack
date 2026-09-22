@@ -1,5 +1,6 @@
 export type Page = 'connections' | 'chat' | 'clients' | 'activity' | 'team' | 'settings';
 export type Permission = 'none' | 'read' | 'write' | 'admin';
+export type AccessMode = 'read' | 'write' | 'read_write';
 export interface User {
   id: string;
   name: string;
@@ -45,6 +46,7 @@ export interface Connection {
   status: 'connected' | 'error' | 'paused';
   server_url: string;
   auth_type: string;
+  access_mode: AccessMode;
   is_demo: number;
   tools: Tool[];
   canManage: boolean;
